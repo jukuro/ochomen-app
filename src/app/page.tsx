@@ -15,6 +15,7 @@ import {
   Plus,
   ShoppingBag,
   Bell,
+  FileText,
 } from "lucide-react";
 import type { Todo, Entry, Child, Screen, Plan, TodoDraft, Member, Diary } from "@/lib/types";
 import { APP_TODAY, isOverdue, isToday, isTomorrow } from "@/lib/dates";
@@ -58,6 +59,7 @@ export default function App() {
   const [newCategoryName, setNewCategoryName] = useState("");
 
   const [selectedCategory, setSelectedCategory] = useState("園だより");
+  const [scanImportMethod, setScanImportMethod] = useState<"camera" | "paste" | "pdf">("camera");
   const [scannedImage, setScannedImage] = useState<string | null>(null);
   const [ocrTextResult, setOcrTextResult] = useState("");
   const [isScanning, setIsScanning] = useState(false);
@@ -1690,17 +1692,17 @@ export default function App() {
               className="absolute inset-0 bg-black/15 z-20 cursor-default"
               onClick={() => setShowFabMenu(false)}
             />
-            <div className="absolute bottom-[8.5rem] right-5 flex flex-col items-end gap-3 z-30 animate-slide-up">
+            <div className="absolute bottom-[8.5rem] right-5 flex flex-col items-end gap-2.5 z-30 animate-slide-up">
               {/* 手動入力 */}
               <div className="flex items-center gap-2">
-                <span className="bg-slate-800 text-white text-xs font-bold py-1 px-2 rounded-lg shadow-md">
+                <span className="bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded-lg shadow-md">
                   手動入力 ➕
                 </span>
                 <button
                   onClick={() => {
                     setShowFabMenu(false);
-                    setSelectedCategory("お帳面");
-                    setOcrTextResult("### 手動入力\nカレンダーの予定・タスクを手動で登録します。");
+                    setSelectedCategory("園だより");
+                    setOcrTextResult("### 手動入力\n予定・タスクを手動で登録します。");
                     setTodoDrafts([
                       {
                         id: createLocalId("draft"),
@@ -1713,26 +1715,63 @@ export default function App() {
                     ]);
                     setIsScanModalOpen(true);
                   }}
-                  className="w-12 h-12 bg-white text-slate-700 hover:bg-slate-100 rounded-full flex items-center justify-center shadow-lg border border-slate-100 active:scale-95 transition"
+                  className="w-10 h-10 bg-white text-slate-700 hover:bg-slate-100 rounded-full flex items-center justify-center shadow-lg border border-slate-100 active:scale-95 transition"
                 >
-                  <Plus size={20} className="text-teal-600" />
+                  <Plus size={16} className="text-teal-600" />
+                </button>
+              </div>
+
+              {/* メール・LINEコピペ */}
+              <div className="flex items-center gap-2">
+                <span className="bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded-lg shadow-md">
+                  メール・LINEコピペ 📋
+                </span>
+                <button
+                  onClick={() => {
+                    setShowFabMenu(false);
+                    resetScanForm();
+                    setScanImportMethod("paste");
+                    setIsScanModalOpen(true);
+                  }}
+                  className="w-10 h-10 bg-amber-500 hover:bg-amber-600 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
+                >
+                  <Plus size={16} className="text-white" />
+                </button>
+              </div>
+
+              {/* PDF・ファイル読み込み */}
+              <div className="flex items-center gap-2">
+                <span className="bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded-lg shadow-md">
+                  PDF・ファイル選択 📄
+                </span>
+                <button
+                  onClick={() => {
+                    setShowFabMenu(false);
+                    resetScanForm();
+                    setScanImportMethod("pdf");
+                    setIsScanModalOpen(true);
+                  }}
+                  className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
+                >
+                  <FileText size={16} />
                 </button>
               </div>
 
               {/* プリントスキャン */}
               <div className="flex items-center gap-2">
-                <span className="bg-slate-800 text-white text-xs font-bold py-1 px-2 rounded-lg shadow-md">
+                <span className="bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded-lg shadow-md">
                   プリントスキャン 📸
                 </span>
                 <button
                   onClick={() => {
                     setShowFabMenu(false);
                     resetScanForm();
+                    setScanImportMethod("camera");
                     setIsScanModalOpen(true);
                   }}
-                  className="w-12 h-12 bg-teal-600 hover:bg-teal-700 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
+                  className="w-10 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
                 >
-                  <Camera size={20} />
+                  <Camera size={16} />
                 </button>
               </div>
             </div>
@@ -1756,6 +1795,8 @@ export default function App() {
           members={members}
           targetChildIds={targetChildIds}
           selectedCategory={selectedCategory}
+          importMethod={scanImportMethod}
+          onSelectImportMethod={setScanImportMethod}
           scannedImage={scannedImage}
           ocrTextResult={ocrTextResult}
           isScanning={isScanning}

@@ -33,7 +33,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   const [orgName, setOrgName] = useState("");
   
   const [people, setPeople] = useState<Child[]>([
-    { id: "c1", name: "こあちゃん 👦", avatar: "👦", color: "bg-blue-500", dotColor: "bg-blue-500" }
+    { id: "c1", name: "こあ 👦", avatar: "👦", color: "bg-blue-500", dotColor: "bg-blue-500" }
   ]);
   const [newPersonName, setNewPersonName] = useState("");
   const [newPersonAvatar, setNewPersonAvatar] = useState("👦");

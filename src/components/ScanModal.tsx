@@ -20,6 +20,8 @@ interface ScanModalProps {
   members: Member[];
   targetChildIds: string[];
   selectedCategory: string;
+  importMethod: "camera" | "paste" | "pdf";
+  onSelectImportMethod: (method: "camera" | "paste" | "pdf") => void;
   scannedImage: string | null;
   ocrTextResult: string;
   isScanning: boolean;
@@ -47,6 +49,8 @@ export function ScanModal({
   members,
   targetChildIds,
   selectedCategory,
+  importMethod,
+  onSelectImportMethod,
   scannedImage,
   ocrTextResult,
   isScanning,
@@ -65,11 +69,20 @@ export function ScanModal({
 }: ScanModalProps) {
   if (!open) return null;
 
+  const headerTitle =
+    importMethod === "paste"
+      ? "LINE・メール貼付"
+      : importMethod === "pdf"
+      ? "PDF・ファイル読込"
+      : "プリントスキャン";
+
   return (
     <div className="absolute inset-0 bg-black/50 flex items-end z-50">
-      <div className="bg-white w-full rounded-t-3xl p-5 space-y-4 max-h-[90%] overflow-y-auto animate-slide-up">
+      <div className="bg-white w-full rounded-t-3xl p-5 space-y-4 max-h-[90%] overflow-y-auto animate-slide-up text-slate-800">
         <div className="flex justify-between items-center">
-          <h3 className="font-bold text-slate-800">新規スキャン</h3>
+          <h3 className="font-bold text-slate-800 flex items-center gap-1.5">
+            {importMethod === "paste" ? "📋" : importMethod === "pdf" ? "📄" : "📸"} {headerTitle}
+          </h3>
           <button type="button" onClick={onClose} className="text-slate-400 p-1">
             <X size={20} />
           </button>
@@ -78,7 +91,7 @@ export function ScanModal({
         <div className="space-y-3">
           <div>
             <label className="text-xs font-bold text-slate-400 block mb-1.5">
-              対象のお子さま
+              対象メンバー
             </label>
             <div className="flex gap-2 flex-wrap">
               {childrenProfiles.map((child) => (
@@ -105,7 +118,7 @@ export function ScanModal({
             <select
               value={selectedCategory}
               onChange={(event) => onSelectCategory(event.target.value)}
-              className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 outline-none focus:border-teal-500"
+              className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 outline-none focus:border-teal-500 bg-white"
             >
               {categories.map((category) => (
                 <option key={category} value={category}>
@@ -116,87 +129,92 @@ export function ScanModal({
           </div>
 
           {!ocrTextResult && (
-            <div className="space-y-4">
-              {/* 取込方法タブ選択 */}
-              <div>
-                <label className="text-xs font-bold text-slate-400 block mb-1.5">
-                  取り込み方法
-                </label>
-                {isScanning ? (
-                  <div className="border-2 border-dashed border-teal-300 bg-teal-50 rounded-xl p-8 flex flex-col items-center gap-2">
-                    <Loader2 className="animate-spin text-teal-600" />
-                    <span className="text-sm text-teal-600 font-bold">
-                      AIが読み取り中...
-                    </span>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {/* カメラ撮影 */}
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={onScanNote}
-                        className="flex-1 border-2 border-dashed border-teal-200 bg-teal-50/50 hover:bg-teal-50 rounded-xl p-4 flex flex-col items-center gap-1.5 text-teal-600 transition"
-                      >
-                        <Camera size={20} />
-                        <span className="text-xs font-bold">カメラで撮影</span>
-                      </button>
-                      
-                      <button
-                        type="button"
-                        onClick={onScanYearlyPlan}
-                        className="flex-1 border-2 border-dashed border-amber-200 bg-amber-50/50 hover:bg-amber-50 rounded-xl p-4 flex flex-col items-center gap-1.5 text-amber-700 transition"
-                      >
-                        <FileText size={20} />
-                        <span className="text-xs font-bold">年間予定・冊子</span>
-                      </button>
+            <div className="space-y-3 pt-1">
+              {isScanning ? (
+                <div className="border-2 border-dashed border-teal-300 bg-teal-50 rounded-xl p-8 flex flex-col items-center gap-2">
+                  <Loader2 className="animate-spin text-teal-600" />
+                  <span className="text-sm text-teal-600 font-bold">
+                    AIが読み取り中...
+                  </span>
+                </div>
+              ) : (
+                <>
+                  {/* カメラ読み込み */}
+                  {importMethod === "camera" && (
+                    <div className="space-y-2">
+                      <span className="text-xs font-bold text-slate-400 block">写真をスキャン</span>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={onScanNote}
+                          className="flex-1 border-2 border-dashed border-teal-200 bg-teal-50/50 hover:bg-teal-50 rounded-xl p-6 flex flex-col items-center gap-1.5 text-teal-600 transition"
+                        >
+                          <Camera size={24} />
+                          <span className="text-xs font-bold">手紙・配布物を撮影</span>
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={onScanYearlyPlan}
+                          className="flex-1 border-2 border-dashed border-amber-200 bg-amber-50/50 hover:bg-amber-50 rounded-xl p-6 flex flex-col items-center gap-1.5 text-amber-700 transition"
+                        >
+                          <FileText size={24} />
+                          <span className="text-xs font-bold">年間予定・案内冊子</span>
+                        </button>
+                      </div>
                     </div>
+                  )}
 
-                    {/* テキストコピペ & PDFアップロード */}
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
+                  {/* テキストコピペ */}
+                  {importMethod === "paste" && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
                       <div>
-                        <span className="text-[10px] font-bold text-slate-500 block mb-1">📋 LINEやメールを貼り付け</span>
+                        <span className="text-xs font-bold text-slate-500 block mb-1">📋 コピペエリア</span>
                         <div className="flex gap-1.5">
                           <textarea
-                            placeholder="LINEやメールで届いた連絡をここに貼り付けると、AIが自動解析して持ち物・提出タスクを作成します。"
-                            rows={2}
+                            placeholder="メールやLINEの文面をここに貼り付けてください。"
+                            rows={3}
                             onPaste={(e) => {
                               const pastedText = e.clipboardData.getData("Text");
                               if (pastedText.trim()) {
-                                onScanNote(); // コピペ読み込みデモを起動
+                                onScanNote();
                               }
                             }}
-                            className="flex-1 border border-slate-200 rounded-lg p-2 text-[10px] text-slate-800 bg-white resize-none outline-none focus:border-teal-500"
+                            className="flex-1 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white resize-none outline-none focus:border-teal-500"
                           />
                           <button
                             type="button"
                             onClick={onScanNote}
-                            className="bg-slate-800 hover:bg-slate-900 text-white text-[10px] font-bold px-3 rounded-lg flex items-center justify-center shrink-0"
+                            className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 rounded-lg flex items-center justify-center shrink-0"
                           >
-                            読込
+                            解析
                           </button>
                         </div>
                       </div>
-
-                      <div className="border-t border-slate-200/60 pt-2 flex justify-between items-center text-xs">
-                        <div>
-                          <span className="text-[10px] font-bold text-slate-500 block">📄 PDF・画像ファイル選択</span>
-                          <span className="text-[9px] text-slate-400">学校のホームページ等からダウンロードしたPDF</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={onScanNote}
-                          className="bg-white border border-slate-300 text-slate-700 text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50"
-                        >
-                          ファイル選択
-                        </button>
-                      </div>
+                      <p className="text-[10px] text-slate-400">※貼り付けると、AIがアサイン・日付を解析してやることを作成します。</p>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+
+                  {/* PDF/ファイル選択 */}
+                  {importMethod === "pdf" && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 flex flex-col items-center gap-3">
+                      <span className="text-xs font-bold text-slate-500 block">📄 ドキュメントファイル(PDF/画像)のアップロード</span>
+                      <button
+                        type="button"
+                        onClick={onScanNote}
+                        className="w-full py-4 bg-white border border-dashed border-indigo-300 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-indigo-50/30 transition shadow-sm"
+                      >
+                        <FileText size={18} />
+                        ファイルを選択（PDF, PNG, JPEG）
+                      </button>
+                      <p className="text-[10px] text-slate-400">学校のウェブサイトなどから保存したPDFをそのまま読み込めます。</p>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
+
 
           {scannedImage && (
             <div>
