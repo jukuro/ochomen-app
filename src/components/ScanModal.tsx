@@ -116,37 +116,85 @@ export function ScanModal({
           </div>
 
           {!ocrTextResult && (
-            <div>
-              <label className="text-xs font-bold text-slate-400 block mb-1.5">
-                写真を撮影
-              </label>
-              {isScanning ? (
-                <div className="border-2 border-dashed border-teal-300 bg-teal-50 rounded-xl p-8 flex flex-col items-center gap-2">
-                  <Loader2 className="animate-spin text-teal-600" />
-                  <span className="text-sm text-teal-600 font-bold">
-                    AIが読み取り中...
-                  </span>
-                </div>
-              ) : (
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={onScanNote}
-                    className="flex-1 border-2 border-dashed border-teal-200 bg-teal-50/50 rounded-xl p-5 flex flex-col items-center gap-1.5 text-teal-600 hover:bg-teal-50 transition"
-                  >
-                    <Camera size={22} />
-                    <span className="text-xs font-bold">お帳面</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onScanYearlyPlan}
-                    className="flex-1 border-2 border-dashed border-amber-200 bg-amber-50/50 rounded-xl p-5 flex flex-col items-center gap-1.5 text-amber-700 hover:bg-amber-50 transition"
-                  >
-                    <FileText size={22} />
-                    <span className="text-xs font-bold">年間予定</span>
-                  </button>
-                </div>
-              )}
+            <div className="space-y-4">
+              {/* 取込方法タブ選択 */}
+              <div>
+                <label className="text-xs font-bold text-slate-400 block mb-1.5">
+                  取り込み方法
+                </label>
+                {isScanning ? (
+                  <div className="border-2 border-dashed border-teal-300 bg-teal-50 rounded-xl p-8 flex flex-col items-center gap-2">
+                    <Loader2 className="animate-spin text-teal-600" />
+                    <span className="text-sm text-teal-600 font-bold">
+                      AIが読み取り中...
+                    </span>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* カメラ撮影 */}
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={onScanNote}
+                        className="flex-1 border-2 border-dashed border-teal-200 bg-teal-50/50 hover:bg-teal-50 rounded-xl p-4 flex flex-col items-center gap-1.5 text-teal-600 transition"
+                      >
+                        <Camera size={20} />
+                        <span className="text-xs font-bold">カメラで撮影</span>
+                      </button>
+                      
+                      <button
+                        type="button"
+                        onClick={onScanYearlyPlan}
+                        className="flex-1 border-2 border-dashed border-amber-200 bg-amber-50/50 hover:bg-amber-50 rounded-xl p-4 flex flex-col items-center gap-1.5 text-amber-700 transition"
+                      >
+                        <FileText size={20} />
+                        <span className="text-xs font-bold">年間予定・冊子</span>
+                      </button>
+                    </div>
+
+                    {/* テキストコピペ & PDFアップロード */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-500 block mb-1">📋 LINEやメールを貼り付け</span>
+                        <div className="flex gap-1.5">
+                          <textarea
+                            placeholder="LINEやメールで届いた連絡をここに貼り付けると、AIが自動解析して持ち物・提出タスクを作成します。"
+                            rows={2}
+                            onPaste={(e) => {
+                              const pastedText = e.clipboardData.getData("Text");
+                              if (pastedText.trim()) {
+                                onScanNote(); // コピペ読み込みデモを起動
+                              }
+                            }}
+                            className="flex-1 border border-slate-200 rounded-lg p-2 text-[10px] text-slate-800 bg-white resize-none outline-none focus:border-teal-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={onScanNote}
+                            className="bg-slate-800 hover:bg-slate-900 text-white text-[10px] font-bold px-3 rounded-lg flex items-center justify-center shrink-0"
+                          >
+                            読込
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-200/60 pt-2 flex justify-between items-center text-xs">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-500 block">📄 PDF・画像ファイル選択</span>
+                          <span className="text-[9px] text-slate-400">学校のホームページ等からダウンロードしたPDF</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={onScanNote}
+                          className="bg-white border border-slate-300 text-slate-700 text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50"
+                        >
+                          ファイル選択
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

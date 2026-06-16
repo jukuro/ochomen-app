@@ -848,7 +848,7 @@ export default function App() {
                   className="w-full border-2 border-dashed border-teal-200 bg-teal-50/30 rounded-2xl p-8 flex flex-col items-center gap-2 text-teal-700 hover:bg-teal-50 transition"
                 >
                   <Camera size={28} />
-                  <span className="text-sm font-bold">最初のお帳面をスキャン</span>
+                  <span className="text-sm font-bold">最初の配布物・書類をスキャン</span>
                   <span className="text-xs text-teal-600/70">カメラで撮影するだけ</span>
                 </button>
               )}
