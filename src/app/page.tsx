@@ -17,7 +17,7 @@ import {
   Bell,
   FileText,
 } from "lucide-react";
-import type { Todo, Entry, Child, Screen, Plan, TodoDraft, Member, Diary } from "@/lib/types";
+import type { Todo, Entry, Child, Screen, Plan, TodoDraft, Member, Diary, Milestone } from "@/lib/types";
 import { APP_TODAY, isOverdue, isToday, isTomorrow } from "@/lib/dates";
 import { localAppStateStore, type AppState } from "@/lib/appState";
 import { DEMO_CHILDREN, DEMO_ENTRIES } from "@/lib/demoData";
@@ -108,6 +108,41 @@ export default function App() {
   const [selectedNewDiaryTags, setSelectedNewDiaryTags] = useState<string[]>([]);
   const [editingDiaryId, setEditingDiaryId] = useState<string | null>(null);
   const [editingDiaryContent, setEditingDiaryContent] = useState("");
+
+  const [milestones, setMilestones] = useState<Milestone[]>([
+    {
+      id: "m_1",
+      childId: "c1",
+      date: "2023-09-15",
+      type: "milestone",
+      title: "初めて立った！",
+      description: "おもちゃのテーブルに手をつかずに、2〜3秒ふらふらしながら自分の力で立てました！",
+    },
+    {
+      id: "m_2",
+      childId: "c1",
+      date: "2024-04-10",
+      type: "health",
+      title: "1歳半健診",
+      description: "歯科健診も虫歯なし。積み木を上手に4つ重ねられました。",
+    },
+    {
+      id: "m_3",
+      childId: "c1",
+      date: "2024-04-10",
+      type: "growth",
+      title: "身体測定 (1歳半)",
+      description: "身長: 79.5cm / 体重: 10.2kg",
+    },
+  ]);
+  const [albumSubTab, setAlbumSubTab] = useState<"diary" | "timeline">("diary");
+  const [isAddingMilestone, setIsAddingMilestone] = useState(false);
+  const [newMilestoneType, setNewMilestoneType] = useState<"milestone" | "growth" | "health">("milestone");
+  const [newMilestoneTitle, setNewMilestoneTitle] = useState("");
+  const [newMilestoneDate, setNewMilestoneDate] = useState(APP_TODAY);
+  const [newMilestoneDesc, setNewMilestoneDesc] = useState("");
+  const [newMilestoneHeight, setNewMilestoneHeight] = useState("");
+  const [newMilestoneWeight, setNewMilestoneWeight] = useState("");
 
   const [zoomedImageId, setZoomedImageId] = useState<string | null>(null);
   const [newChildName, setNewChildName] = useState("");
@@ -625,6 +660,40 @@ export default function App() {
     }
   };
 
+  const handleSaveMilestone = () => {
+    let finalTitle = newMilestoneTitle.trim();
+    let finalDesc = newMilestoneDesc.trim();
+
+    if (newMilestoneType === "growth") {
+      finalTitle = `身体測定`;
+      finalDesc = `身長: ${newMilestoneHeight || "--"}cm / 体重: ${newMilestoneWeight || "--"}kg`;
+    }
+
+    if (!finalTitle && newMilestoneType !== "growth") return;
+
+    const newMilestone: Milestone = {
+      id: createLocalId("milestone"),
+      childId: selectedChildIds.length > 0 ? selectedChildIds[0] : "c1",
+      date: newMilestoneDate,
+      type: newMilestoneType,
+      title: finalTitle,
+      description: finalDesc,
+    };
+
+    setMilestones((prev) => [newMilestone, ...prev]);
+    setIsAddingMilestone(false);
+    setNewMilestoneTitle("");
+    setNewMilestoneDesc("");
+    setNewMilestoneHeight("");
+    setNewMilestoneWeight("");
+    showToast("成長年表に記録を追加しました");
+  };
+
+  const handleDeleteMilestone = (milestoneId: string) => {
+    setMilestones((prev) => prev.filter((m) => m.id !== milestoneId));
+    showToast("年表から記録を削除しました");
+  };
+
   const resetScanForm = () => {
     setScannedImage(null);
     setOcrTextResult("");
@@ -739,6 +808,34 @@ export default function App() {
       return overdueTodos[0];
     }
     return null;
+  })();
+
+  const activeChildId = selectedChildIds.length > 0 ? selectedChildIds[0] : "c1";
+
+  const timelineItems = (() => {
+    const childDiaries = diaries
+      .filter((d) => d.childId === activeChildId)
+      .map((d) => ({
+        id: d.id,
+        date: d.date,
+        type: "diary" as const,
+        title: "つぶやき日記",
+        description: d.content,
+      }));
+
+    const childMilestones = milestones
+      .filter((m) => m.childId === activeChildId)
+      .map((m) => ({
+        id: m.id,
+        date: m.date,
+        type: m.type,
+        title: m.title,
+        description: m.description,
+      }));
+
+    return [...childDiaries, ...childMilestones].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
   })();
 
   const calendarMonthDate = new Date(`${currentCalendarMonth}-01T00:00:00`);
@@ -1078,25 +1175,53 @@ export default function App() {
             ) : (
               /* 成長アルバム */
               <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
-                {/* 行事連動リマインダーバナー */}
-                {(() => {
-                  const todayTasks = allTodos.filter((t) => isToday(t.dueDate));
-                  if (todayTasks.length > 0) {
-                    const mainTask = todayTasks[0];
-                    return (
-                      <div className="bg-teal-50 border border-teal-200/60 rounded-xl p-3 text-xs text-teal-800 flex items-center gap-2 shadow-sm animate-pulse">
-                        <span className="text-base">📌</span>
-                        <span className="font-bold leading-relaxed">
-                          今日は「{mainTask.task}」があったはず！日記を書いて思い出を残しませんか？
-                        </span>
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
+                {/* 成長アルバム内サブ切り替えタブ */}
+                <div className="bg-slate-200/50 p-1 flex items-center gap-1 rounded-xl flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setAlbumSubTab("diary")}
+                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold text-center transition ${
+                      albumSubTab === "diary"
+                        ? "bg-white text-teal-700 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
+                  >
+                    📖 成長日記
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAlbumSubTab("timeline")}
+                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold text-center transition ${
+                      albumSubTab === "timeline"
+                        ? "bg-white text-teal-700 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
+                  >
+                    📈 成長年表
+                  </button>
+                </div>
 
-                {/* AI学習案内ガイド */}
-                <details className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 cursor-pointer shadow-sm group">
+                {albumSubTab === "diary" && (
+                  <>
+                    {/* 行事連動リマインダーバナー */}
+                    {(() => {
+                      const todayTasks = allTodos.filter((t) => isToday(t.dueDate));
+                      if (todayTasks.length > 0) {
+                        const mainTask = todayTasks[0];
+                        return (
+                          <div className="bg-teal-50 border border-teal-200/60 rounded-xl p-3 text-xs text-teal-800 flex items-center gap-2 shadow-sm animate-pulse">
+                            <span className="text-base">📌</span>
+                            <span className="font-bold leading-relaxed">
+                              今日は「{mainTask.task}」があったはず！日記を書いて思い出を残しませんか？
+                            </span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+
+                    {/* AI学習案内ガイド */}
+                    <details className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 cursor-pointer shadow-sm group">
                   <summary className="font-bold flex justify-between items-center select-none text-slate-700">
                     <span className="flex items-center gap-1">
                       <span>💡</span> AI学習について（使うほど賢くなります）
@@ -1418,6 +1543,79 @@ export default function App() {
                       })
                   )}
                 </div>
+                </>
+                )}
+
+                {/* 成長年表タブ */}
+                {albumSubTab === "timeline" && (
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
+                        {children.find((c) => c.id === activeChildId)?.name.split(" ")[0]}の成長年表
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingMilestone(true)}
+                        className="text-[10px] font-bold bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-full border border-teal-200 transition"
+                      >
+                        記録を追加 ＋
+                      </button>
+                    </div>
+
+                    {timelineItems.length === 0 ? (
+                      <div className="text-center py-12 bg-white rounded-2xl border border-slate-100 p-6 text-sm text-slate-400 shadow-sm">
+                        年表のデータがありません。「記録を追加」から登録してください。
+                      </div>
+                    ) : (
+                      <div className="relative border-l-2 border-slate-200 ml-3.5 pl-6 space-y-6 py-2">
+                        {timelineItems.map((item) => {
+                          const isDiary = item.type === "diary";
+                          const isGrowth = item.type === "growth";
+                          const isHealth = item.type === "health";
+
+                          let icon = "✨";
+                          let iconBg = "bg-pink-100 text-pink-700 border-pink-200";
+                          if (isDiary) {
+                            icon = "📖";
+                            iconBg = "bg-blue-100 text-blue-700 border-blue-200";
+                          } else if (isGrowth) {
+                            icon = "📈";
+                            iconBg = "bg-emerald-100 text-emerald-700 border-emerald-200";
+                          } else if (isHealth) {
+                            icon = "🏥";
+                            iconBg = "bg-amber-100 text-amber-700 border-amber-200";
+                          }
+
+                          return (
+                            <div key={item.id} className="relative space-y-1">
+                              {/* タイムラインの丸アイコン */}
+                              <span className={`absolute -left-[37px] top-0.5 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs shadow-sm ${iconBg}`}>
+                                {icon}
+                              </span>
+                              
+                              <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold">
+                                <span>{item.date}</span>
+                                {!isDiary && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteMilestone(item.id)}
+                                    className="text-slate-400 hover:text-red-500 font-normal"
+                                  >
+                                    削除 🗑️
+                                  </button>
+                                )}
+                              </div>
+                              <h4 className="text-xs font-bold text-slate-800">{item.title}</h4>
+                              <p className="text-xs text-slate-600 bg-white border border-slate-100 p-2.5 rounded-xl leading-relaxed shadow-sm">
+                                {item.description}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -2016,6 +2214,128 @@ export default function App() {
             showToast("初期設定に戻しました");
           }}
         />
+        {/* マイルストーン追加モーダル */}
+        {isAddingMilestone && (
+          <div className="absolute inset-0 bg-black/50 flex items-end z-[60]">
+            <div className="bg-white w-full rounded-t-3xl p-5 space-y-4 animate-slide-up text-slate-800" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-slate-800 flex items-center gap-1.5">
+                  📈 成長記録・マイルストーンを追加
+                </h3>
+                <button type="button" onClick={() => setIsAddingMilestone(false)} className="text-slate-400 p-1">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">記録のタイプ</label>
+                  <div className="flex gap-2 text-xs">
+                    {(
+                      [
+                        { id: "milestone", label: "できたこと ✨" },
+                        { id: "growth", label: "身体測定 📈" },
+                        { id: "health", label: "健診・予防接種 🏥" },
+                      ] as const
+                    ).map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setNewMilestoneType(t.id)}
+                        className={`flex-1 py-1.5 rounded-lg font-bold text-center border transition ${
+                          newMilestoneType === t.id
+                            ? "bg-teal-50 border-teal-200 text-teal-700"
+                            : "bg-slate-50 border-slate-100 text-slate-400"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">日付</label>
+                    <input
+                      type="date"
+                      value={newMilestoneDate}
+                      onChange={(e) => setNewMilestoneDate(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white outline-none"
+                    />
+                  </div>
+                </div>
+
+                {newMilestoneType === "growth" ? (
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">身長 (cm)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="例: 75.5"
+                        value={newMilestoneHeight}
+                        onChange={(e) => setNewMilestoneHeight(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white outline-none"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">体重 (kg)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="例: 9.2"
+                        value={newMilestoneWeight}
+                        onChange={(e) => setNewMilestoneWeight(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white outline-none"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">タイトル</label>
+                      <input
+                        type="text"
+                        placeholder="例: 初めてつかまり立ちをした、日本脳炎1回目"
+                        value={newMilestoneTitle}
+                        onChange={(e) => setNewMilestoneTitle(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">説明・メモ</label>
+                      <textarea
+                        placeholder="詳しい様子をメモしてください"
+                        value={newMilestoneDesc}
+                        onChange={(e) => setNewMilestoneDesc(e.target.value)}
+                        rows={3}
+                        className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white resize-none outline-none"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddingMilestone(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-500 text-xs font-bold"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveMilestone}
+                  className="flex-1 py-2.5 rounded-xl bg-teal-600 text-white text-xs font-bold"
+                >
+                  追加する
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

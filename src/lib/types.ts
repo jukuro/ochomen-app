@@ -63,3 +63,12 @@ export interface Child {
 
 export type Screen = "home" | "timeline" | "shopping" | "calendar";
 export type Plan = "free" | "premium";
+
+export interface Milestone {
+  id: string;
+  childId: string;
+  date: string;
+  type: "milestone" | "growth" | "health";
+  title: string;
+  description: string;
+}
