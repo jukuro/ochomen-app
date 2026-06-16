@@ -16,6 +16,9 @@ import {
   ShoppingBag,
   Bell,
   FileText,
+  Mic,
+  TrendingUp,
+  Sparkles,
 } from "lucide-react";
 import type { Todo, Entry, Child, Screen, Plan, TodoDraft, Member, Diary, Milestone } from "@/lib/types";
 import { APP_TODAY, isOverdue, isToday, isTomorrow } from "@/lib/dates";
@@ -137,6 +140,10 @@ export default function App() {
   ]);
   const [albumSubTab, setAlbumSubTab] = useState<"diary" | "timeline">("diary");
   const [isAddingMilestone, setIsAddingMilestone] = useState(false);
+  const [isAddingDiary, setIsAddingDiary] = useState(false);
+  const [isParsingMilestone, setIsParsingMilestone] = useState(false);
+  const [milestoneVoiceInput, setMilestoneVoiceInput] = useState("");
+  const [isRecordingMilestoneVoice, setIsRecordingMilestoneVoice] = useState(false);
   const [newMilestoneType, setNewMilestoneType] = useState<"milestone" | "growth" | "health">("milestone");
   const [newMilestoneTitle, setNewMilestoneTitle] = useState("");
   const [newMilestoneDate, setNewMilestoneDate] = useState(APP_TODAY);
@@ -578,6 +585,7 @@ export default function App() {
             };
             setDiaries((prev) => [newDiary, ...prev]);
             setSelectedNewDiaryTags([]);
+            setIsAddingDiary(false);
             showToast("AIが日記を綺麗に整理してアルバムに保存しました！✨");
           } catch (error) {
             console.error("Diary recording enrichment error:", error);
@@ -632,6 +640,95 @@ export default function App() {
       setIsProcessingDiary(false);
     }
   };
+
+  const handleStartMilestoneVoiceRecording = () => {
+    setIsRecordingMilestoneVoice(true);
+    setMilestoneVoiceInput("");
+
+    const sampleTexts = [
+      "1歳半健診で身長79.5センチ、体重10.2キロだった。虫歯もなくて積み木も上手に4つ重ねられたよ",
+      "今日初めておもちゃのテーブルに手をつかずに、2秒くらい自分の力で立てました！",
+      "小児科で日本脳炎の予防接種の1回目を打ってきた。泣かずに頑張ったね。"
+    ];
+    const memoText = sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
+    let i = 0;
+    const interval = setInterval(() => {
+      if (i < memoText.length) {
+        setMilestoneVoiceInput((prev) => prev + memoText.charAt(i));
+        i++;
+      } else {
+        clearInterval(interval);
+        setTimeout(async () => {
+          setIsRecordingMilestoneVoice(false);
+          setIsParsingMilestone(true);
+          try {
+            const childObj = children.find((c) => c.id === (selectedChildIds[0] || "c1"));
+            const childName = childObj ? childObj.name.split(" ")[0] : "こども";
+            const response = await fetch("/api/milestone-parse", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                rawText: memoText,
+                childName,
+              }),
+            });
+            const data = await response.json();
+            if (data.type) {
+              setNewMilestoneType(data.type);
+              setNewMilestoneTitle(data.title);
+              setNewMilestoneDesc(data.description);
+              setNewMilestoneDate(data.date || APP_TODAY);
+              if (data.type === "growth") {
+                setNewMilestoneHeight(data.height || "");
+                setNewMilestoneWeight(data.weight || "");
+              }
+              showToast("AIが音声を解析してフォームに入力しました！✨");
+            }
+          } catch (e) {
+            console.error(e);
+            showToast("音声解析に失敗しました");
+          } finally {
+            setIsParsingMilestone(false);
+          }
+        }, 1000);
+      }
+    }, 60);
+  };
+
+  const handleMilestoneTextParse = async () => {
+    if (!milestoneVoiceInput.trim()) return;
+    setIsParsingMilestone(true);
+    try {
+      const childObj = children.find((c) => c.id === (selectedChildIds[0] || "c1"));
+      const childName = childObj ? childObj.name.split(" ")[0] : "こども";
+      const response = await fetch("/api/milestone-parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rawText: milestoneVoiceInput.trim(),
+          childName,
+        }),
+      });
+      const data = await response.json();
+      if (data.type) {
+        setNewMilestoneType(data.type);
+        setNewMilestoneTitle(data.title);
+        setNewMilestoneDesc(data.description);
+        setNewMilestoneDate(data.date || APP_TODAY);
+        if (data.type === "growth") {
+          setNewMilestoneHeight(data.height || "");
+          setNewMilestoneWeight(data.weight || "");
+        }
+        showToast("AIがテキストを解析してフォームに入力しました！✨");
+      }
+    } catch (e) {
+      console.error(e);
+      showToast("解析に失敗しました");
+    } finally {
+      setIsParsingMilestone(false);
+    }
+  };
+
 
   const handleUpdateDiary = (diaryId: string, newContent: string) => {
     setDiaries((prev) =>
@@ -2036,6 +2133,40 @@ export default function App() {
               onClick={() => setShowFabMenu(false)}
             />
             <div className="absolute bottom-[8.5rem] right-5 flex flex-col items-end gap-2.5 z-30 animate-slide-up">
+              {/* 成長日記をつぶやく (AI Voice) */}
+              <div className="flex items-center gap-2">
+                <span className="bg-pink-600 text-white text-[10px] font-bold py-1 px-2.5 rounded-lg shadow-md flex items-center gap-1">
+                  成長日記をつぶやく 🎤 <Sparkles size={10} />
+                </span>
+                <button
+                  onClick={() => {
+                    setShowFabMenu(false);
+                    setIsAddingDiary(true);
+                  }}
+                  className="w-10 h-10 bg-gradient-to-tr from-pink-500 to-rose-400 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
+                >
+                  <Mic size={16} />
+                </button>
+              </div>
+
+              {/* 成長の記録・マイルストーン */}
+              <div className="flex items-center gap-2">
+                <span className="bg-teal-700 text-white text-[10px] font-bold py-1 px-2.5 rounded-lg shadow-md flex items-center gap-1">
+                  できたこと・身体測定・健診 📈
+                </span>
+                <button
+                  onClick={() => {
+                    setShowFabMenu(false);
+                    setIsAddingMilestone(true);
+                  }}
+                  className="w-10 h-10 bg-gradient-to-tr from-teal-500 to-emerald-400 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
+                >
+                  <TrendingUp size={16} />
+                </button>
+              </div>
+
+              <div className="w-full h-[1px] bg-slate-200/50 my-1" />
+
               {/* 手動入力 */}
               <div className="flex items-center gap-2">
                 <span className="bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded-lg shadow-md">
@@ -2217,7 +2348,7 @@ export default function App() {
         {/* マイルストーン追加モーダル */}
         {isAddingMilestone && (
           <div className="absolute inset-0 bg-black/50 flex items-end z-[60]">
-            <div className="bg-white w-full rounded-t-3xl p-5 space-y-4 animate-slide-up text-slate-800" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white w-full rounded-t-3xl p-5 space-y-4 animate-slide-up text-slate-800 max-h-[90%] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex justify-between items-center">
                 <h3 className="font-bold text-slate-800 flex items-center gap-1.5">
                   📈 成長記録・マイルストーンを追加
@@ -2225,6 +2356,70 @@ export default function App() {
                 <button type="button" onClick={() => setIsAddingMilestone(false)} className="text-slate-400 p-1">
                   <X size={20} />
                 </button>
+              </div>
+
+              {/* AI音声・かんたん入力セクション */}
+              <div className="bg-gradient-to-r from-teal-500/10 to-emerald-500/10 border border-teal-100/50 rounded-2xl p-3 space-y-2.5">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-bold text-teal-800 flex items-center gap-1">
+                    <Sparkles size={11} className="text-teal-600" /> 音声・テキストで一発入力 (AI解析)
+                  </span>
+                  {isRecordingMilestoneVoice && (
+                    <span className="text-[9px] text-red-500 font-bold animate-pulse flex items-center gap-0.5">
+                      🔴 音声入力中...
+                    </span>
+                  )}
+                </div>
+
+                {isRecordingMilestoneVoice ? (
+                  <div className="flex flex-col items-center py-2.5 space-y-2 bg-white/60 rounded-xl p-2.5 border border-white">
+                    <div className="flex items-center gap-1 justify-center h-6">
+                      {[1, 2, 3, 4, 5, 4, 3, 2, 1, 2, 3].map((val, idx) => (
+                        <span
+                          key={idx}
+                          style={{ height: `${val * 4}px` }}
+                          className="w-1 bg-teal-500 rounded-full animate-bounce"
+                        />
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-slate-600 text-center font-medium italic">
+                      「{milestoneVoiceInput || "お話ししてください..."}」
+                    </p>
+                  </div>
+                ) : isParsingMilestone ? (
+                  <div className="flex flex-col items-center py-4 space-y-1">
+                    <Loader2 className="animate-spin text-teal-600" size={18} />
+                    <p className="text-[10px] text-teal-700 font-bold">AIが測定数値やできたことを分析中...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <textarea
+                      value={milestoneVoiceInput}
+                      onChange={(e) => setMilestoneVoiceInput(e.target.value)}
+                      placeholder="例：「1歳半健診で身長80センチ、体重10キロだったよ」「初めてタッチができた！」などとつぶやいてください。"
+                      rows={2}
+                      className="w-full border border-slate-200 rounded-xl p-2 text-[10px] text-slate-800 bg-white outline-none focus:border-teal-500"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleStartMilestoneVoiceRecording}
+                        className="flex-1 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-[10px] font-bold flex items-center justify-center gap-1 shadow transition"
+                      >
+                        <Mic size={12} />
+                        <span>🎤 音声入力</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleMilestoneTextParse}
+                        disabled={!milestoneVoiceInput.trim()}
+                        className="px-3 py-2 rounded-xl bg-slate-800 text-white text-[10px] font-bold disabled:bg-slate-200 disabled:text-slate-400 transition"
+                      >
+                        AI自動入力
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-3">
@@ -2332,6 +2527,174 @@ export default function App() {
                 >
                   追加する
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* 音声AI日記追加モーダル */}
+        {isAddingDiary && (
+          <div className="absolute inset-0 bg-black/50 flex items-end z-[60]">
+            <div className="bg-white w-full rounded-t-3xl p-5 space-y-4 animate-slide-up text-slate-800" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-slate-800 flex items-center gap-1.5">
+                  🌸 成長日記を記録 (音声＋AI)
+                </h3>
+                <button type="button" onClick={() => setIsAddingDiary(false)} className="text-slate-400 p-1">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {/* お子さま選択 */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">対象のお子さま</label>
+                  <div className="flex gap-2">
+                    {children.map((child) => {
+                      const isSelected = selectedChildIds.includes(child.id);
+                      return (
+                        <button
+                          key={child.id}
+                          type="button"
+                          onClick={() => handleChildSelectionToggle(child.id)}
+                          className={`flex-1 py-2 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1 ${
+                            isSelected
+                              ? "bg-pink-50 border-pink-200 text-pink-700"
+                              : "bg-slate-50 border-slate-100 text-slate-400"
+                          }`}
+                        >
+                          <span>{child.avatar}</span>
+                          <span>{child.name.split(" ")[0]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 音声入力 / テキスト入力 */}
+                <div className="bg-gradient-to-r from-pink-500/10 to-teal-500/10 border border-teal-100/50 rounded-2xl p-4 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-500">🎤 つぶやくだけでAIが日記を自動整形</span>
+                    {isRecording && (
+                      <span className="text-[10px] text-red-500 font-bold animate-pulse flex items-center gap-1">
+                        🔴 音声入力中...
+                      </span>
+                    )}
+                  </div>
+
+                  {isRecording ? (
+                    <div className="flex flex-col items-center py-4 space-y-3 bg-white/60 rounded-xl p-3 border border-white">
+                      <div className="flex items-center gap-1 justify-center h-8">
+                        {[1, 2, 3, 4, 5, 4, 3, 2, 1, 2, 3].map((val, idx) => (
+                          <span
+                            key={idx}
+                            style={{ height: `${val * 6}px` }}
+                            className="w-1 bg-teal-500 rounded-full animate-bounce"
+                          />
+                        ))}
+                      </div>
+                      <p className="text-xs text-slate-600 text-center font-medium italic">
+                        「{newDiaryRaw || "お話ししてください..."}」
+                      </p>
+                    </div>
+                  ) : isProcessingDiary ? (
+                    <div className="flex flex-col items-center py-6 space-y-2">
+                      <Loader2 className="animate-spin text-teal-600" />
+                      <p className="text-xs text-teal-700 font-bold">AIがきれいな日記に整えています...</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <textarea
+                        value={newDiaryRaw}
+                        onChange={(e) => setNewDiaryRaw(e.target.value)}
+                        placeholder="今日あったことや成長記録をメモしてください。音声アイコンを押すと音声入力のシミュレーションが始まります。"
+                        rows={3}
+                        className="w-full border border-slate-200 rounded-xl p-3 text-xs text-slate-800 bg-white outline-none focus:border-teal-500"
+                      />
+
+                      {/* 肉付け選択 */}
+                      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl text-[10px] font-bold">
+                        {(
+                          [
+                            { id: "raw", label: "そのまま 🗣️" },
+                            { id: "light", label: "ちょっと肉付け ✍️" },
+                            { id: "deep", label: "だいぶ肉付け 📖" },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setDiaryStretchLevel(opt.id)}
+                            className={`flex-1 py-1.5 rounded-lg text-center transition ${
+                              diaryStretchLevel === opt.id
+                                ? "bg-white text-slate-800 shadow"
+                                : "text-slate-400 hover:text-slate-600"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* タグ選択 */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400">🏷️ 思い出タグ（複数選択可）</label>
+                        <div className="flex gap-1 flex-wrap">
+                          {(
+                            [
+                              { id: "面白エピソード", emoji: "😂" },
+                              { id: "成長記録", emoji: "📈" },
+                              { id: "将来子どもに話したい", emoji: "💌" },
+                              { id: "感動・うるうる", emoji: "😭" },
+                            ] as const
+                          ).map((tag) => {
+                            const isSelected = selectedNewDiaryTags.includes(tag.id);
+                            return (
+                              <button
+                                key={tag.id}
+                                type="button"
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setSelectedNewDiaryTags(selectedNewDiaryTags.filter((t) => t !== tag.id));
+                                  } else {
+                                    setSelectedNewDiaryTags([...selectedNewDiaryTags, tag.id]);
+                                  }
+                                }}
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition ${
+                                  isSelected
+                                    ? "bg-pink-500 text-white border-pink-400"
+                                    : "bg-white text-slate-500 border-slate-200"
+                                }`}
+                              >
+                                {tag.emoji} {tag.id}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleStartRecording}
+                          className="flex-1 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center justify-center gap-1 shadow transition"
+                        >
+                          <span>🎤 音声でメモ</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await handleSaveManualDiary();
+                            setIsAddingDiary(false);
+                          }}
+                          disabled={!newDiaryRaw.trim()}
+                          className="px-4 py-2.5 rounded-xl bg-slate-800 text-white text-xs font-bold disabled:bg-slate-200 disabled:text-slate-400 transition"
+                        >
+                          保存
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
