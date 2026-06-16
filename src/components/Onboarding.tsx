@@ -29,7 +29,7 @@ const SUGGESTED_CATEGORIES: Record<string, string[]> = {
 
 export function Onboarding({ onComplete }: OnboardingProps) {
   const [step, setStep] = useState(1);
-  const [selectedOrgType, setSelectedOrgType] = useState("保育園・幼稚園");
+  const [selectedOrgTypes, setSelectedOrgTypes] = useState<string[]>(["保育園・幼稚園"]);
   const [orgName, setOrgName] = useState("");
   
   const [people, setPeople] = useState<Child[]>([
@@ -44,9 +44,24 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   const [isScanning, setIsScanning] = useState(false);
   const [demoDone, setDemoDone] = useState(false);
 
-  const handleOrgTypeChange = (type: string) => {
-    setSelectedOrgType(type);
-    setCategories(SUGGESTED_CATEGORIES[type] || ["お帳面", "園だより"]);
+  const handleOrgTypeToggle = (type: string) => {
+    let nextTypes = [...selectedOrgTypes];
+    if (nextTypes.includes(type)) {
+      if (nextTypes.length > 1) {
+        nextTypes = nextTypes.filter((t) => t !== type);
+      }
+    } else {
+      nextTypes.push(type);
+    }
+    setSelectedOrgTypes(nextTypes);
+
+    // カテゴリをマージ
+    const merged = new Set<string>();
+    nextTypes.forEach((t) => {
+      const cats = SUGGESTED_CATEGORIES[t] || [];
+      cats.forEach((c) => merged.add(c));
+    });
+    setCategories(Array.from(merged));
   };
 
   const handleAddPerson = () => {
@@ -83,7 +98,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   const finish = (didDemoScan: boolean) => {
     onComplete({
       children: people,
-      kindergartenName: orgName.trim() || `${selectedOrgType}の活動`,
+      kindergartenName: orgName.trim() || `${selectedOrgTypes.join("＆")}の活動`,
       categories: categories.length > 0 ? categories : ["お帳面"],
       didDemoScan,
     });
@@ -177,35 +192,38 @@ export function Onboarding({ onComplete }: OnboardingProps) {
 
             <div className="border-t border-slate-100 pt-4 space-y-3">
               <div>
-                <span className="text-xs font-bold text-slate-400 block">どのような活動でお使いですか？</span>
+                <span className="text-xs font-bold text-slate-400 block">どのような活動でお使いですか？（複数選択可）</span>
                 <p className="text-[10px] text-slate-400">用途に応じてオススメのカテゴリセットを自動作成します。</p>
               </div>
               <div className="grid grid-cols-2 gap-1.5">
-                {ORG_TYPES.map((type) => (
-                  <button
-                    key={type.id}
-                    type="button"
-                    onClick={() => handleOrgTypeChange(type.id)}
-                    className={`py-2 px-1 rounded-xl text-xs font-bold border transition ${
-                      selectedOrgType === type.id
-                        ? "bg-teal-50 border-teal-500 text-teal-800"
-                        : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-                    }`}
-                  >
-                    {type.label}
-                  </button>
-                ))}
+                {ORG_TYPES.map((type) => {
+                  const isSelected = selectedOrgTypes.includes(type.id);
+                  return (
+                    <button
+                      key={type.id}
+                      type="button"
+                      onClick={() => handleOrgTypeToggle(type.id)}
+                      className={`py-2 px-1 rounded-xl text-xs font-bold border transition ${
+                        isSelected
+                          ? "bg-teal-50 border-teal-500 text-teal-800"
+                          : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      {type.label}
+                    </button>
+                  );
+                })}
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-500 block mb-1.5">
-                  施設・団体名
+                  施設・学校・団体名（複数ある場合はカンマ等で区切って入力）
                 </label>
                 <input
                   type="text"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  placeholder={`例：しいの実${selectedOrgType}`}
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 outline-none focus:border-teal-500"
+                  placeholder="例：しいの実小学校, 青葉中学校, 中央PTA"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-xs text-slate-800 outline-none focus:border-teal-500"
                 />
               </div>
             </div>
