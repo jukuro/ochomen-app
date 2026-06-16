@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Image from "next/image";
-import { FileText, Image as ImageIcon } from "lucide-react";
+import { FileText, Image as ImageIcon, Edit, Trash2 } from "lucide-react";
 import type { Child, Entry } from "@/lib/types";
 import { formatRelativeDate } from "@/lib/dates";
 
@@ -10,10 +11,13 @@ interface EntryCardProps {
   childProfiles: Child[];
   viewMode: "ocr" | "image";
   isZoomed: boolean;
+  categories: string[];
   onMarkRead: (entryId: string) => void;
   onSetViewMode: (entryId: string, mode: "ocr" | "image") => void;
   onToggleZoom: (entryId: string) => void;
   onToggleTodoComplete: (todoId: string) => void;
+  onUpdateEntry: (entryId: string, updatedFields: Partial<Entry>) => void;
+  onDeleteEntry: (entryId: string) => void;
 }
 
 export function EntryCard({
@@ -21,20 +25,28 @@ export function EntryCard({
   childProfiles,
   viewMode,
   isZoomed,
+  categories,
   onMarkRead,
   onSetViewMode,
   onToggleZoom,
   onToggleTodoComplete,
+  onUpdateEntry,
+  onDeleteEntry,
 }: EntryCardProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editCategory, setEditCategory] = useState(entry.category);
+  const [editOcrText, setEditOcrText] = useState(entry.ocrText);
+  const [editDate, setEditDate] = useState(entry.date);
+
   return (
     <div
-      onClick={() => onMarkRead(entry.id)}
+      onClick={() => !isEditing && onMarkRead(entry.id)}
       className={`bg-white border rounded-2xl p-4 shadow-sm space-y-3 ${
         entry.isRead ? "border-slate-100" : "border-teal-200"
       }`}
     >
       <div className="flex items-center justify-between">
-        <div className="flex gap-1 flex-wrap">
+        <div className="flex gap-1 flex-wrap items-center">
           {entry.childIds.map((childId) => {
             const child = childProfiles.find((profile) => profile.id === childId);
             return (
@@ -52,64 +64,173 @@ export function EntryCard({
             </span>
           )}
         </div>
-        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-teal-50 text-teal-600">
-          {entry.category}
-        </span>
+        
+        <div className="flex items-center gap-2">
+          {!isEditing && (
+            <>
+              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-teal-50 text-teal-600">
+                {entry.category}
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsEditing(true);
+                }}
+                className="text-slate-400 hover:text-teal-600 p-1 bg-slate-50 hover:bg-slate-100 rounded transition"
+              >
+                <Edit size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (confirm("このお便りプリントを削除しますか？紐づく予定・タスクも削除されます。")) {
+                    onDeleteEntry(entry.id);
+                  }
+                }}
+                className="text-slate-400 hover:text-red-500 p-1 bg-slate-50 hover:bg-slate-100 rounded transition"
+              >
+                <Trash2 size={14} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
-      <div className="text-sm font-bold text-slate-800">{entry.date}</div>
-      <div className="grid grid-cols-2 bg-slate-100 p-0.5 rounded-lg">
-        <button
-          type="button"
-          onClick={() => onSetViewMode(entry.id, "ocr")}
-          className={`py-2 text-xs font-bold rounded-md flex items-center justify-center gap-1 transition ${
-            viewMode === "ocr" ? "bg-white text-teal-700 shadow-sm" : "text-slate-400"
-          }`}
-        >
-          <FileText size={14} /> AIテキスト
-        </button>
-        <button
-          type="button"
-          onClick={() => onSetViewMode(entry.id, "image")}
-          className={`py-2 text-xs font-bold rounded-md flex items-center justify-center gap-1 transition ${
-            viewMode === "image" ? "bg-white text-teal-700 shadow-sm" : "text-slate-400"
-          }`}
-        >
-          <ImageIcon size={14} /> 元の画像
-        </button>
-      </div>
-      <div className="min-h-[80px]">
-        {viewMode === "ocr" ? (
-          <div className="text-sm text-slate-700 space-y-2 leading-relaxed">
-            {entry.ocrText.split("\n\n").map((paragraph, index) =>
-              paragraph.startsWith("###") ? (
-                <h4
-                  key={index}
-                  className="font-bold text-teal-700 border-l-2 border-teal-500 pl-2"
-                >
-                  {paragraph.replace("### ", "")}
-                </h4>
-              ) : (
-                <p key={index}>{paragraph}</p>
-              )
-            )}
+
+      {isEditing ? (
+        <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200" onClick={(e) => e.stopPropagation()}>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="text-[10px] font-bold text-slate-400 block mb-0.5">カテゴリー</label>
+              <select
+                value={editCategory}
+                onChange={(e) => setEditCategory(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg p-2 text-xs bg-white text-slate-800 outline-none focus:border-teal-500"
+              >
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 block mb-0.5">日付</label>
+              <input
+                type="date"
+                value={editDate}
+                onChange={(e) => setEditDate(e.target.value)}
+                className="border border-slate-200 rounded-lg p-2 text-xs bg-white text-slate-800 outline-none focus:border-teal-500"
+              />
+            </div>
           </div>
-        ) : entry.imageUrl ? (
-          <div className="rounded-lg overflow-hidden border border-slate-100 relative">
-            <Image
-              src={entry.imageUrl}
-              alt="スキャン画像"
-              width={720}
-              height={960}
-              onClick={() => onToggleZoom(entry.id)}
-              className={`w-full h-auto cursor-zoom-in transition-transform ${
-                isZoomed ? "scale-150 z-20 relative" : ""
-              }`}
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 block mb-0.5">AIテキスト (Markdown)</label>
+            <textarea
+              value={editOcrText}
+              onChange={(e) => setEditOcrText(e.target.value)}
+              rows={6}
+              className="w-full border border-slate-200 rounded-lg p-2.5 text-xs bg-white text-slate-800 resize-none outline-none focus:border-teal-500"
             />
           </div>
-        ) : (
-          <p className="text-sm text-slate-400 text-center py-6">画像はありません</p>
-        )}
-      </div>
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setIsEditing(false);
+                setEditCategory(entry.category);
+                setEditOcrText(entry.ocrText);
+                setEditDate(entry.date);
+              }}
+              className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-300 transition"
+            >
+              キャンセル
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onUpdateEntry(entry.id, {
+                  category: editCategory,
+                  ocrText: editOcrText,
+                  date: editDate,
+                });
+                setIsEditing(false);
+              }}
+              className="px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-bold hover:bg-teal-700 transition"
+            >
+              保存
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="text-sm font-bold text-slate-800">{entry.date}</div>
+          <div className="grid grid-cols-2 bg-slate-100 p-0.5 rounded-lg">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetViewMode(entry.id, "ocr");
+              }}
+              className={`py-2 text-xs font-bold rounded-md flex items-center justify-center gap-1 transition ${
+                viewMode === "ocr" ? "bg-white text-teal-700 shadow-sm" : "text-slate-400"
+              }`}
+            >
+              <FileText size={14} /> AIテキスト
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetViewMode(entry.id, "image");
+              }}
+              className={`py-2 text-xs font-bold rounded-md flex items-center justify-center gap-1 transition ${
+                viewMode === "image" ? "bg-white text-teal-700 shadow-sm" : "text-slate-400"
+              }`}
+            >
+              <ImageIcon size={14} /> 元の画像
+            </button>
+          </div>
+          <div className="min-h-[80px]">
+            {viewMode === "ocr" ? (
+              <div className="text-sm text-slate-700 space-y-2 leading-relaxed">
+                {entry.ocrText.split("\n\n").map((paragraph, index) =>
+                  paragraph.startsWith("###") ? (
+                    <h4
+                      key={index}
+                      className="font-bold text-teal-700 border-l-2 border-teal-500 pl-2"
+                    >
+                      {paragraph.replace("### ", "")}
+                    </h4>
+                  ) : (
+                    <p key={index}>{paragraph}</p>
+                  )
+                )}
+              </div>
+            ) : entry.imageUrl ? (
+              <div className="rounded-lg overflow-hidden border border-slate-100 relative">
+                <Image
+                  src={entry.imageUrl}
+                  alt="スキャン画像"
+                  width={720}
+                  height={960}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleZoom(entry.id);
+                  }}
+                  className={`w-full h-auto cursor-zoom-in transition-transform ${
+                    isZoomed ? "scale-150 z-20 relative" : ""
+                  }`}
+                />
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400 text-center py-6">画像はありません</p>
+            )}
+          </div>
+        </>
+      )}
+
       {entry.todos?.map((todo) => (
         <div
           key={todo.id}

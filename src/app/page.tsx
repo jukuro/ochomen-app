@@ -675,6 +675,44 @@ export default function App() {
     );
   };
 
+  const handleUpdateEntry = (entryId: string, updatedFields: Partial<Entry>) => {
+    setEntries((currentEntries) =>
+      currentEntries.map((e) => (e.id === entryId ? { ...e, ...updatedFields } : e))
+    );
+    showToast("お便りの内容を更新しました");
+  };
+
+  const handleDeleteEntry = (entryId: string) => {
+    setEntries((currentEntries) => currentEntries.filter((e) => e.id !== entryId));
+    showToast("お便りを削除しました");
+  };
+
+  const handleUpdateTodo = (todoId: string, updatedFields: Partial<Todo>) => {
+    setEntries((currentEntries) =>
+      currentEntries.map((e) => {
+        if (!e.todos) return e;
+        return {
+          ...e,
+          todos: e.todos.map((t) => (t.id === todoId ? { ...t, ...updatedFields } : t)),
+        };
+      })
+    );
+    showToast("タスクを更新しました");
+  };
+
+  const handleDeleteTodo = (todoId: string) => {
+    setEntries((currentEntries) =>
+      currentEntries.map((e) => {
+        if (!e.todos) return e;
+        return {
+          ...e,
+          todos: e.todos.filter((t) => t.id !== todoId),
+        };
+      })
+    );
+    showToast("タスクを削除しました");
+  };
+
   const filteredEntries = entries.filter((entry) =>
     entry.childIds.some((id) => selectedChildIds.includes(id))
   );
@@ -730,6 +768,8 @@ export default function App() {
         variant={variant}
         onToggleComplete={toggleTodoComplete}
         onOpenSource={scrollToEntry}
+        onUpdateTodo={handleUpdateTodo}
+        onDeleteTodo={handleDeleteTodo}
       />
     );
   };
@@ -746,6 +786,7 @@ export default function App() {
           childProfiles={children}
           viewMode={currentMode}
           isZoomed={zoomedImageId === entry.id}
+          categories={categories}
           onMarkRead={markEntryRead}
           onSetViewMode={(entryId, mode) =>
             setViewModes((prev) => ({ ...prev, [entryId]: mode }))
@@ -754,6 +795,8 @@ export default function App() {
             setZoomedImageId(zoomedImageId === entryId ? null : entryId)
           }
           onToggleTodoComplete={toggleTodoComplete}
+          onUpdateEntry={handleUpdateEntry}
+          onDeleteEntry={handleDeleteEntry}
         />
       </div>
     );

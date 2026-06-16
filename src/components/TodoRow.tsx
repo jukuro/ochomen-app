@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowRight, ShoppingBag, ClipboardList, Bell } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, ShoppingBag, ClipboardList, Bell, Edit, Trash2, Check, X } from "lucide-react";
 import type { Child, Entry, Todo, Member } from "@/lib/types";
 import { formatRelativeDate, isOverdue, isToday } from "@/lib/dates";
 
@@ -12,6 +13,8 @@ interface TodoRowProps {
   variant?: "compact" | "card";
   onToggleComplete: (todoId: string) => void;
   onOpenSource: (entryId: string) => void;
+  onUpdateTodo: (todoId: string, updatedFields: Partial<Todo>) => void;
+  onDeleteTodo: (todoId: string) => void;
 }
 
 export function TodoRow({
@@ -22,7 +25,16 @@ export function TodoRow({
   variant = "compact",
   onToggleComplete,
   onOpenSource,
+  onUpdateTodo,
+  onDeleteTodo,
 }: TodoRowProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTask, setEditTask] = useState(todo.task);
+  const [editDueDate, setEditDueDate] = useState(todo.dueDate);
+  const [editAssignedTo, setEditAssignedTo] = useState(todo.assignedTo || "共通");
+  const [editType, setEditType] = useState(todo.type || "todo");
+  const [editReminderAt, setEditReminderAt] = useState(todo.reminderAt || "none");
+
   const parentEntry = entries.find((entry) => entry.id === todo.originalEntryId);
   const primaryChild = childProfiles.find((child) =>
     parentEntry?.childIds.includes(child.id)
@@ -34,10 +46,119 @@ export function TodoRow({
   const assignedMember = members.find((m) => m.name === todo.assignedTo);
   const assigneeLabel = assignedMember ? `${assignedMember.role} ${todo.assignedTo}` : todo.assignedTo || "共通";
 
+  const handleSave = () => {
+    onUpdateTodo(todo.id, {
+      task: editTask.trim(),
+      dueDate: editDueDate,
+      assignedTo: editAssignedTo as any,
+      type: editType,
+      reminderAt: editReminderAt as any,
+    });
+    setIsEditing(false);
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditTask(todo.task);
+    setEditDueDate(todo.dueDate);
+    setEditAssignedTo(todo.assignedTo || "共通");
+    setEditType(todo.type || "todo");
+    setEditReminderAt(todo.reminderAt || "none");
+  };
+
+  if (isEditing) {
+    return (
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
+        <div className="flex gap-2">
+          {/* 種別選択 */}
+          <button
+            type="button"
+            onClick={() => setEditType("todo")}
+            className={`flex-1 py-1 rounded-md text-xs font-bold text-center border transition ${
+              editType === "todo"
+                ? "bg-teal-50 border-teal-200 text-teal-700"
+                : "bg-white border-slate-100 text-slate-400"
+            }`}
+          >
+            📄 やること
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditType("shopping")}
+            className={`flex-1 py-1 rounded-md text-xs font-bold text-center border transition ${
+              editType === "shopping"
+                ? "bg-amber-50 border-amber-200 text-amber-700"
+                : "bg-white border-slate-100 text-slate-400"
+            }`}
+          >
+            🛒 買うもの
+          </button>
+        </div>
+
+        <input
+          type="text"
+          value={editTask}
+          onChange={(e) => setEditTask(e.target.value)}
+          placeholder={editType === "shopping" ? "買うものの名前" : "やることの内容"}
+          className="w-full border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white outline-none focus:border-teal-500"
+        />
+
+        <div className="flex gap-1.5 flex-wrap">
+          <input
+            type="date"
+            value={editDueDate}
+            onChange={(e) => setEditDueDate(e.target.value)}
+            className="flex-1 min-w-[90px] border border-slate-200 rounded-lg p-1.5 text-xs text-slate-800 bg-white"
+          />
+          <select
+            value={editAssignedTo}
+            onChange={(e) => setEditAssignedTo(e.target.value)}
+            className="border border-slate-200 rounded-lg p-1.5 text-xs text-slate-800 bg-white"
+          >
+            <option value="共通">共通</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.name}>
+                {m.role} {m.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={editReminderAt}
+            onChange={(e) => setEditReminderAt(e.target.value as any)}
+            className="border border-slate-200 rounded-lg p-1.5 text-xs text-slate-800 bg-white flex-1 min-w-[70px]"
+          >
+            <option value="none">🔔 なし</option>
+            <option value="today">🔔 当日</option>
+            <option value="1day">🔔 1日前</option>
+            <option value="3day">🔔 3日前</option>
+          </select>
+        </div>
+
+        <div className="flex gap-2 justify-end pt-1">
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-600 text-xs font-bold"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!editTask.trim()}
+            className="px-2.5 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-bold disabled:bg-slate-200 disabled:text-slate-400"
+          >
+            保存
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (variant === "card") {
     return (
       <div
-        className={`bg-white border rounded-xl p-3.5 shadow-sm flex flex-col gap-2 ${
+        className={`bg-white border rounded-xl p-3.5 shadow-sm flex flex-col gap-2 relative ${
           overdue ? "border-red-200" : "border-slate-100"
         }`}
       >
@@ -57,13 +178,33 @@ export function TodoRow({
               {isShopping ? "買い物" : "やること"}
             </span>
           </div>
-          <span
-            className={`text-xs font-bold ${
-              overdue ? "text-red-600" : "text-slate-400"
-            }`}
-          >
-            {formatRelativeDate(todo.dueDate)}
-          </span>
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-xs font-bold ${
+                overdue ? "text-red-600" : "text-slate-400"
+              }`}
+            >
+              {formatRelativeDate(todo.dueDate)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsEditing(true)}
+              className="text-slate-400 hover:text-teal-600 p-0.5"
+            >
+              <Edit size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm("このタスクを削除しますか？")) {
+                  onDeleteTodo(todo.id);
+                }
+              }}
+              className="text-slate-400 hover:text-red-500 p-0.5"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
         </div>
         <div className="flex items-start gap-1">
           <p className={`text-sm font-medium leading-snug text-slate-700 ${todo.isCompleted ? "line-through text-slate-400" : ""}`}>
@@ -80,7 +221,7 @@ export function TodoRow({
               </span>
             )}
           </div>
-          {todo.originalEntryId !== "manual" && (
+          {todo.originalEntryId !== "manual" && todo.originalEntryId !== "manual_shopping" && (
             <button
               type="button"
               onClick={() => onOpenSource(todo.originalEntryId)}
@@ -120,14 +261,32 @@ export function TodoRow({
               {isShopping ? "買い物" : "やること"}
             </span>
             <span>·</span>
-            <span>{primaryChild?.name.split(" ")[0]}</span>
+            <span>{primaryChild?.name.split(" ")[0] || "共通"}</span>
             <span>·</span>
             <span>担当: {assigneeLabel}</span>
           </p>
         </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-        {todo.originalEntryId !== "manual" && (
+        <button
+          type="button"
+          onClick={() => setIsEditing(true)}
+          className="text-slate-400 hover:text-teal-600 p-1 bg-slate-50 hover:bg-slate-100 rounded"
+        >
+          <Edit size={12} />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (confirm("このタスクを削除しますか？")) {
+              onDeleteTodo(todo.id);
+            }
+          }}
+          className="text-slate-400 hover:text-red-500 p-1 bg-slate-50 hover:bg-slate-100 rounded"
+        >
+          <Trash2 size={12} />
+        </button>
+        {todo.originalEntryId !== "manual" && todo.originalEntryId !== "manual_shopping" && (
           <button
             type="button"
             onClick={() => onOpenSource(todo.originalEntryId)}
