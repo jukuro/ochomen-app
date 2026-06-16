@@ -510,65 +510,92 @@ export default function App() {
         i++;
       } else {
         clearInterval(interval);
-        setTimeout(() => {
+        setTimeout(async () => {
           setIsRecording(false);
           setIsProcessingDiary(true);
 
-          setTimeout(() => {
-            let formattedContent = memoText;
-            if (diaryStretchLevel === "light") {
-              formattedContent = "お砂場で楽しく遊んでお友達に優しくおもちゃを貸せました。相手を思いやる気持ちが育っており、成長を感じます。";
-            } else if (diaryStretchLevel === "deep") {
-              formattedContent = "今日は園庭の大きなお砂場で元気に遊びました。お友達がおもちゃを使いたそうにしているのを見て、「どうぞ！」と自分から優しく貸してあげることができました。相手を気遣う優しさと成長が感じられ、見守っていてとても心温まる一日でした。";
-            }
+          try {
+            const childObj = children.find((c) => c.id === (selectedChildIds[0] || "c1"));
+            const childName = childObj ? childObj.name.split(" ")[0] : "こども";
+            const response = await fetch("/api/diary-enrich", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                rawMemo: memoText,
+                stretchLevel: diaryStretchLevel,
+                childName,
+              }),
+            });
+
+            const data = await response.json() as { content?: string; tags?: string[] };
+            const content = data.content || memoText;
+            const tags = data.tags || ["成長記録"];
 
             const newDiary: Diary = {
               id: createLocalId("diary"),
               childId: selectedChildIds.length > 0 ? selectedChildIds[0] : "c1",
               date: APP_TODAY,
               rawMemo: memoText,
-              content: formattedContent,
+              content,
               stretchLevel: diaryStretchLevel,
               imageUrl: "/sample_scanned_note_1781392769810.png",
-              tags: selectedNewDiaryTags.length > 0 ? selectedNewDiaryTags : ["面白エピソード"],
+              tags,
             };
             setDiaries((prev) => [newDiary, ...prev]);
             setSelectedNewDiaryTags([]);
-            setIsProcessingDiary(false);
             showToast("AIが日記を綺麗に整理してアルバムに保存しました！✨");
-          }, 1800);
+          } catch (error) {
+            console.error("Diary recording enrichment error:", error);
+            showToast("AI日記の保存に失敗しました");
+          } finally {
+            setIsProcessingDiary(false);
+          }
         }, 1000);
       }
     }, 80);
   };
 
-  const handleSaveManualDiary = () => {
+  const handleSaveManualDiary = async () => {
     if (!newDiaryRaw.trim()) return;
+    const memoText = newDiaryRaw.trim();
     setIsProcessingDiary(true);
 
-    setTimeout(() => {
-      let formattedContent = newDiaryRaw.trim();
-      if (diaryStretchLevel === "light") {
-        formattedContent = `今日あった出来事：${newDiaryRaw.trim()}（AIが日常の思い出を分かりやすく整理しました）`;
-      } else if (diaryStretchLevel === "deep") {
-        formattedContent = `【きょうの思い出】${newDiaryRaw.trim()}。今日起きた出来事は大切な成長のステップです。AIが健やかな毎日を見守り、豊かな物語に変換してアルバムに保管しました。`;
-      }
+    try {
+      const childObj = children.find((c) => c.id === (selectedChildIds[0] || "c1"));
+      const childName = childObj ? childObj.name.split(" ")[0] : "こども";
+      const response = await fetch("/api/diary-enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rawMemo: memoText,
+          stretchLevel: diaryStretchLevel,
+          childName,
+        }),
+      });
+
+      const data = await response.json() as { content?: string; tags?: string[] };
+      const content = data.content || memoText;
+      const tags = data.tags || ["成長記録"];
 
       const newDiary: Diary = {
         id: createLocalId("diary"),
         childId: selectedChildIds.length > 0 ? selectedChildIds[0] : "c1",
         date: APP_TODAY,
-        rawMemo: newDiaryRaw.trim(),
-        content: formattedContent,
+        rawMemo: memoText,
+        content,
         stretchLevel: diaryStretchLevel,
-        tags: selectedNewDiaryTags.length > 0 ? selectedNewDiaryTags : ["成長記録"],
+        tags,
       };
       setDiaries((prev) => [newDiary, ...prev]);
-      setIsProcessingDiary(false);
       setNewDiaryRaw("");
       setSelectedNewDiaryTags([]);
       showToast("成長日記をアルバムに保存しました");
-    }, 1200);
+    } catch (error) {
+      console.error("Diary manual enrichment error:", error);
+      showToast("日記の保存に失敗しました");
+    } finally {
+      setIsProcessingDiary(false);
+    }
   };
 
   const handleUpdateDiary = (diaryId: string, newContent: string) => {
