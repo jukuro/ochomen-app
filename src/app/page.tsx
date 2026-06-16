@@ -306,10 +306,10 @@ export default function App() {
   };
 
   const handleAddNewChild = () => {
-    if (currentPlan === "free" && children.length >= 1) {
+    if (currentPlan === "free" && children.length >= 2) {
       setPaywall({
         title: "お子さまを追加するにはプレミアムが必要です",
-        description: "無料プランではお子さま1人まで登録できます。兄弟姉妹のお便りをまとめて管理しましょう。",
+        description: "無料プランではお子さま2人まで登録できます。3人以上のお便りをまとめて管理するにはプレミアムプランをご利用ください。",
       });
       return;
     }

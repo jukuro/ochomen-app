@@ -11,7 +11,7 @@ interface PaywallModalProps {
 }
 
 const PREMIUM_FEATURES = [
-  { icon: Users, text: "複数のお子さまを登録" },
+  { icon: Users, text: "3人以上のお子さま・メンバーを登録" },
   { icon: Bell, text: "提出期限のリマインド通知" },
   { icon: Calendar, text: "Googleカレンダー自動同期" },
 ];
