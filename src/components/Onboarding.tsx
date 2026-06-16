@@ -230,13 +230,17 @@ export function Onboarding({ onComplete }: OnboardingProps) {
           </div>
         )}
 
-        {step === 2 && (
+         {step === 2 && (
           <div className="space-y-5 animate-fade-in">
             <div>
               <h2 className="text-xl font-bold text-slate-800">カテゴリを調整する</h2>
               <p className="text-xs text-slate-500 mt-1 leading-relaxed">
                 書類の分類タグを決めましょう。最初によくスキャンするプリント類に合わせて、追加・削除が可能です。
               </p>
+              <div className="bg-teal-50 border border-teal-200/50 rounded-xl p-3 text-[10px] text-teal-800 leading-relaxed mt-3">
+                💡 <strong>分類を決めきれない方へ</strong>：<br/>
+                カテゴリの選択をスキップして進めても大丈夫です！プリントやお帳面を適当にスキャンすれば、AIが書類の内容を分析し、自動で最適なカテゴリ（「お帳面」「園だより」等）をオススメ・分類してくれます。
+              </div>
             </div>
             
             <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
