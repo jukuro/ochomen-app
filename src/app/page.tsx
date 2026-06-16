@@ -688,6 +688,21 @@ export default function App() {
   const overdueTodos = activeTodos.filter((t) => isOverdue(t.dueDate));
   const unreadEntries = filteredEntries.filter((e) => !e.isRead).slice(0, 3);
 
+  const tonightOneThing = (() => {
+    if (tomorrowTodos.length > 0) {
+      const shopping = tomorrowTodos.find((t) => t.type === "shopping");
+      return shopping || tomorrowTodos[0];
+    }
+    if (todayTodos.length > 0) {
+      const shopping = todayTodos.find((t) => t.type === "shopping");
+      return shopping || todayTodos[0];
+    }
+    if (overdueTodos.length > 0) {
+      return overdueTodos[0];
+    }
+    return null;
+  })();
+
   const calendarMonthDate = new Date(`${currentCalendarMonth}-01T00:00:00`);
   const calendarYear = calendarMonthDate.getFullYear();
   const calendarMonthIndex = calendarMonthDate.getMonth();
@@ -825,6 +840,66 @@ export default function App() {
                   : "今日は提出・持ち物の予定はありません"}
               </p>
             </div>
+
+            {tonightOneThing && (() => {
+              const associatedEntry = entries.find((e) => e.id === tonightOneThing.originalEntryId);
+              const childObj = associatedEntry
+                ? children.find((c) => associatedEntry.childIds.includes(c.id))
+                : children.find((c) => selectedChildIds.includes(c.id));
+              const childName = childObj ? childObj.name.split(" ")[0] : "こども";
+              const childColor = childObj ? childObj.color : "bg-teal-500";
+              const isDueTomorrow = isTomorrow(tonightOneThing.dueDate);
+              const isDueToday = isToday(tonightOneThing.dueDate);
+
+              const dateLabel = isDueTomorrow
+                ? "明日"
+                : isDueToday
+                ? "今日"
+                : `${Number(tonightOneThing.dueDate.slice(5, 7))}月${Number(tonightOneThing.dueDate.slice(8, 10))}日`;
+
+              return (
+                <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-2xl p-4 shadow-lg border border-slate-800 relative overflow-hidden space-y-3">
+                  <div className="absolute top-0 right-0 p-4 opacity-10 text-6xl select-none pointer-events-none">🌙</div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold tracking-wider text-indigo-300 uppercase bg-indigo-500/20 px-2 py-0.5 rounded-full">
+                      今夜は、ひとつだけ 🌙
+                    </span>
+                    <span className={`text-[9px] font-bold text-white px-2 py-0.5 rounded-full ${childColor}`}>
+                      {childName}
+                    </span>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-slate-400 font-bold">
+                      {dateLabel}の準備
+                    </p>
+                    <h4 className="text-sm font-bold text-slate-100 leading-snug">
+                      {tonightOneThing.type === "shopping" ? "🛒 " : "📄 "}
+                      {tonightOneThing.task}
+                    </h4>
+                  </div>
+
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleTodoComplete(tonightOneThing.id)}
+                      className="flex-1 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold shadow-sm transition active:scale-95 flex items-center justify-center gap-1"
+                    >
+                      <span>準備完了 済</span>
+                    </button>
+                    {tonightOneThing.originalEntryId && tonightOneThing.originalEntryId !== "manual_shopping" && (
+                      <button
+                        type="button"
+                        onClick={() => scrollToEntry(tonightOneThing.originalEntryId)}
+                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700 transition active:scale-95"
+                      >
+                        詳細 ↩
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {overdueTodos.length > 0 && (
               <section className="space-y-2">
