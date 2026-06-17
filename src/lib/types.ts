@@ -18,6 +18,7 @@ export interface TodoDraft {
   assignedTo: TodoAssignee;
   type: "todo" | "shopping";
   reminderAt: "none" | "today" | "1day" | "3day";
+  confidence?: number;
 }
 
 export interface Member {

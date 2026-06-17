@@ -50,6 +50,9 @@ export default function App() {
   const [entries, setEntries] = useState<Entry[]>(DEMO_ENTRIES);
 
   const entryRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const recognitionRef = useRef<any>(null);
+  const milestoneRecognitionRef = useRef<any>(null);
+  const diaryTranscriptRef = useRef("");
   const [currentCalendarMonth, setCurrentCalendarMonth] = useState(APP_TODAY.slice(0, 7));
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [viewModes, setViewModes] = useState<Record<string, "ocr" | "image">>({});
@@ -389,74 +392,77 @@ export default function App() {
     showToast(`${name}さんを家族メンバーに追加しました`);
   };
 
-  const simulateOcrProcess = async () => {
+  const handleScanFile = async (file: File) => {
     setIsScanning(true);
-    const rawOcrText =
-      "### 先生から\n本日は園庭でお砂遊びを行いました。お友達と一緒に山を作って楽しそうでした。\n\n### 家庭から\n最近お家でもお砂場セットで遊ぶのがブームになっています。";
+    try {
+      // ファイルをbase64に変換
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = "";
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64 = btoa(binary);
 
-    setTimeout(async () => {
-      const analysis = await analyzeOcrText(rawOcrText, selectedCategory);
-      setScannedImage("/sample_scanned_note_1781392769810.png");
-      setOcrTextResult(analysis.text);
+      // プレビュー用のObject URLを生成
+      const previewUrl = URL.createObjectURL(file);
+      setScannedImage(previewUrl);
+
+      const response = await fetch("/api/scan-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64,
+          mimeType: file.type || "image/jpeg",
+          categoryName: selectedCategory,
+        }),
+      });
+
+      if (!response.ok) {
+        showToast("画像の読み取りに失敗しました。再度お試しください。");
+        setIsScanning(false);
+        return;
+      }
+
+      const data = await response.json() as {
+        text?: string;
+        todoDrafts?: Array<{
+          task: string;
+          dueDate: string;
+          assignedTo: string;
+          type: "todo" | "shopping";
+          reminderAt: "none" | "today" | "1day" | "3day";
+          confidence?: number;
+        }>;
+      };
+
+      setOcrTextResult(data.text || "");
       setTodoDrafts(
-        analysis.todoDrafts.length > 0
-          ? analysis.todoDrafts
-          : [
-              {
-                id: createLocalId("draft"),
-                task: "お砂遊び用のお着替えセットを持たせる",
-                dueDate: "2026-06-16",
-                assignedTo: "共通",
-                type: "shopping",
-                reminderAt: "1day",
-              },
-            ]
+        (data.todoDrafts || []).map((d) => ({
+          id: createLocalId("draft"),
+          ...d,
+        }))
       );
+    } catch (error) {
+      console.error("scan file error:", error);
+      showToast("画像の読み取りでエラーが発生しました。");
+    } finally {
       setIsScanning(false);
-    }, 1500);
+    }
   };
 
-  const simulateYearlyPlanOcrProcess = async () => {
+  const handleScanText = async (text: string) => {
     setIsScanning(true);
-    const rawOcrText =
-      "### 令和8年度 年間主要行事予定表\n\n- **6月15日**: 【提出物】歯科検診アンケート提出 (対象: 全員)\n- **6月18日**: 【行事】保育参観・講話会\n- **6月24日**: 【持参】お弁当の日・園外保育";
-
-    setTimeout(async () => {
-      const analysis = await analyzeOcrText(rawOcrText, "年間予定");
-      setScannedImage("/sample_scanned_note_1781392769810.png");
+    try {
+      const analysis = await analyzeOcrText(text, selectedCategory);
       setOcrTextResult(analysis.text);
-      setTodoDrafts(
-        analysis.todoDrafts.length > 0
-          ? analysis.todoDrafts
-          : [
-              {
-                id: createLocalId("draft"),
-                task: "歯科検診アンケート提出",
-                dueDate: "2026-06-15",
-                assignedTo: "共通",
-                type: "todo",
-                reminderAt: "1day",
-              },
-              {
-                id: createLocalId("draft"),
-                task: "保育参観・講話会",
-                dueDate: "2026-06-18",
-                assignedTo: "ママ",
-                type: "todo",
-                reminderAt: "none",
-              },
-              {
-                id: createLocalId("draft"),
-                task: "お弁当・レジャーシート持参",
-                dueDate: "2026-06-24",
-                assignedTo: "共通",
-                type: "shopping",
-                reminderAt: "1day",
-              },
-            ]
-      );
+      setTodoDrafts(analysis.todoDrafts);
+    } catch (error) {
+      console.error("scan text error:", error);
+      showToast("テキストの解析でエラーが発生しました。");
+    } finally {
       setIsScanning(false);
-    }, 1500);
+    }
   };
 
   const handleSubmitEntry = () => {
@@ -541,61 +547,53 @@ export default function App() {
   };
 
   const handleStartRecording = () => {
-    setIsRecording(true);
+    const SpeechRecognitionImpl =
+      typeof window !== "undefined"
+        ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        : null;
+
+    if (!SpeechRecognitionImpl) {
+      showToast("このブラウザは音声入力に対応していません。テキストで入力してください。");
+      return;
+    }
+
+    const recognition = new SpeechRecognitionImpl();
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    diaryTranscriptRef.current = "";
     setNewDiaryRaw("");
+    setIsRecording(true);
 
-    const memoText = "今日はお砂場で遊んでお友達に優しくおもちゃを貸してあげられました！";
-    let i = 0;
-    const interval = setInterval(() => {
-      if (i < memoText.length) {
-        setNewDiaryRaw((prev) => prev + memoText.charAt(i));
-        i++;
-      } else {
-        clearInterval(interval);
-        setTimeout(async () => {
-          setIsRecording(false);
-          setIsProcessingDiary(true);
-
-          try {
-            const childObj = children.find((c) => c.id === (selectedChildIds[0] || "c1"));
-            const childName = childObj ? childObj.name.split(" ")[0] : "こども";
-            const response = await fetch("/api/diary-enrich", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                rawMemo: memoText,
-                stretchLevel: diaryStretchLevel,
-                childName,
-              }),
-            });
-
-            const data = await response.json() as { content?: string; tags?: string[] };
-            const content = data.content || memoText;
-            const tags = data.tags || ["成長記録"];
-
-            const newDiary: Diary = {
-              id: createLocalId("diary"),
-              childId: selectedChildIds.length > 0 ? selectedChildIds[0] : "c1",
-              date: APP_TODAY,
-              rawMemo: memoText,
-              content,
-              stretchLevel: diaryStretchLevel,
-              imageUrl: "/sample_scanned_note_1781392769810.png",
-              tags,
-            };
-            setDiaries((prev) => [newDiary, ...prev]);
-            setSelectedNewDiaryTags([]);
-            setIsAddingDiary(false);
-            showToast("AIが日記を綺麗に整理してアルバムに保存しました！✨");
-          } catch (error) {
-            console.error("Diary recording enrichment error:", error);
-            showToast("AI日記の保存に失敗しました");
-          } finally {
-            setIsProcessingDiary(false);
-          }
-        }, 1000);
+    recognition.onresult = (event: any) => {
+      let full = "";
+      for (let i = 0; i < event.results.length; i++) {
+        full += event.results[i][0].transcript;
       }
-    }, 80);
+      diaryTranscriptRef.current = full;
+      setNewDiaryRaw(full);
+    };
+
+    recognition.onerror = () => {
+      setIsRecording(false);
+      showToast("音声入力でエラーが発生しました。テキストで入力してください。");
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  const handleStopRecording = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    setIsRecording(false);
   };
 
   const handleSaveManualDiary = async () => {
@@ -642,57 +640,51 @@ export default function App() {
   };
 
   const handleStartMilestoneVoiceRecording = () => {
-    setIsRecordingMilestoneVoice(true);
-    setMilestoneVoiceInput("");
+    const SpeechRecognitionImpl =
+      typeof window !== "undefined"
+        ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        : null;
 
-    const sampleTexts = [
-      "1歳半健診で身長79.5センチ、体重10.2キロだった。虫歯もなくて積み木も上手に4つ重ねられたよ",
-      "今日初めておもちゃのテーブルに手をつかずに、2秒くらい自分の力で立てました！",
-      "小児科で日本脳炎の予防接種の1回目を打ってきた。泣かずに頑張ったね。"
-    ];
-    const memoText = sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
-    let i = 0;
-    const interval = setInterval(() => {
-      if (i < memoText.length) {
-        setMilestoneVoiceInput((prev) => prev + memoText.charAt(i));
-        i++;
-      } else {
-        clearInterval(interval);
-        setTimeout(async () => {
-          setIsRecordingMilestoneVoice(false);
-          setIsParsingMilestone(true);
-          try {
-            const childObj = children.find((c) => c.id === (selectedChildIds[0] || "c1"));
-            const childName = childObj ? childObj.name.split(" ")[0] : "こども";
-            const response = await fetch("/api/milestone-parse", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                rawText: memoText,
-                childName,
-              }),
-            });
-            const data = await response.json();
-            if (data.type) {
-              setNewMilestoneType(data.type);
-              setNewMilestoneTitle(data.title);
-              setNewMilestoneDesc(data.description);
-              setNewMilestoneDate(data.date || APP_TODAY);
-              if (data.type === "growth") {
-                setNewMilestoneHeight(data.height || "");
-                setNewMilestoneWeight(data.weight || "");
-              }
-              showToast("AIが音声を解析してフォームに入力しました！✨");
-            }
-          } catch (e) {
-            console.error(e);
-            showToast("音声解析に失敗しました");
-          } finally {
-            setIsParsingMilestone(false);
-          }
-        }, 1000);
+    if (!SpeechRecognitionImpl) {
+      showToast("このブラウザは音声入力に対応していません。テキストで入力してください。");
+      return;
+    }
+
+    const recognition = new SpeechRecognitionImpl();
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    setMilestoneVoiceInput("");
+    setIsRecordingMilestoneVoice(true);
+
+    recognition.onresult = (event: any) => {
+      let full = "";
+      for (let i = 0; i < event.results.length; i++) {
+        full += event.results[i][0].transcript;
       }
-    }, 60);
+      setMilestoneVoiceInput(full);
+    };
+
+    recognition.onerror = () => {
+      setIsRecordingMilestoneVoice(false);
+      showToast("音声入力でエラーが発生しました。テキストで入力してください。");
+    };
+
+    recognition.onend = () => {
+      setIsRecordingMilestoneVoice(false);
+    };
+
+    milestoneRecognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  const handleStopMilestoneRecording = () => {
+    if (milestoneRecognitionRef.current) {
+      milestoneRecognitionRef.current.stop();
+      milestoneRecognitionRef.current = null;
+    }
+    setIsRecordingMilestoneVoice(false);
   };
 
   const handleMilestoneTextParse = async () => {
@@ -1367,6 +1359,13 @@ export default function App() {
                       <p className="text-xs text-slate-600 text-center font-medium italic">
                         「{newDiaryRaw || "お話ししてください..."}」
                       </p>
+                      <button
+                        type="button"
+                        onClick={handleStopRecording}
+                        className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white text-xs font-bold rounded-xl transition"
+                      >
+                        ⏹ 停止して確認
+                      </button>
                     </div>
                   ) : isProcessingDiary ? (
                     <div className="flex flex-col items-center py-6 space-y-2">
@@ -1379,7 +1378,7 @@ export default function App() {
                       <textarea
                         value={newDiaryRaw}
                         onChange={(e) => setNewDiaryRaw(e.target.value)}
-                        placeholder="今日あったことや成長記録をメモしてください。音声アイコンを押すと音声入力のシミュレーションが始まります。"
+                        placeholder="今日あったことや成長記録をメモしてください。🎤ボタンを押すとマイクで話しかけられます。"
                         rows={3}
                         className="w-full border border-slate-200 rounded-xl p-3 text-xs text-slate-800 bg-white outline-none focus:border-teal-500"
                       />
@@ -2290,8 +2289,8 @@ export default function App() {
             }
           }}
           onSelectCategory={setSelectedCategory}
-          onScanNote={simulateOcrProcess}
-          onScanYearlyPlan={simulateYearlyPlanOcrProcess}
+          onScanFile={handleScanFile}
+          onScanText={handleScanText}
           onChangeOcrText={setOcrTextResult}
           onAddTodoDraft={addTodoDraft}
           onUpdateTodoDraft={updateTodoDraft}
@@ -2385,6 +2384,13 @@ export default function App() {
                     <p className="text-[10px] text-slate-600 text-center font-medium italic">
                       「{milestoneVoiceInput || "お話ししてください..."}」
                     </p>
+                    <button
+                      type="button"
+                      onClick={handleStopMilestoneRecording}
+                      className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-[10px] font-bold rounded-xl transition"
+                    >
+                      ⏹ 停止して確認
+                    </button>
                   </div>
                 ) : isParsingMilestone ? (
                   <div className="flex flex-col items-center py-4 space-y-1">
@@ -2606,7 +2612,7 @@ export default function App() {
                       <textarea
                         value={newDiaryRaw}
                         onChange={(e) => setNewDiaryRaw(e.target.value)}
-                        placeholder="今日あったことや成長記録をメモしてください。音声アイコンを押すと音声入力のシミュレーションが始まります。"
+                        placeholder="今日あったことや成長記録をメモしてください。🎤ボタンを押すとマイクで話しかけられます。"
                         rows={3}
                         className="w-full border border-slate-200 rounded-xl p-3 text-xs text-slate-800 bg-white outline-none focus:border-teal-500"
                       />

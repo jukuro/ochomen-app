@@ -12,11 +12,136 @@ export interface OcrAnalysisResultBackend {
     assignedTo: string;
     type: "todo" | "shopping";
     reminderAt: "none" | "today" | "1day" | "3day";
+    confidence: number;
   }>;
 }
 
+const TODAY = new Date().toISOString().slice(0, 10);
+
+const TODO_DRAFT_SCHEMA = {
+  type: "ARRAY",
+  description:
+    "テキストから抽出した提出物・持ち物・イベントなどのタスクおよびお買い物の候補リスト。",
+  items: {
+    type: "OBJECT",
+    properties: {
+      task: {
+        type: "STRING",
+        description:
+          "タスク名または購入すべき物の名前（例：「歯科検診アンケートの提出」「雑巾2枚の購入」）",
+      },
+      dueDate: {
+        type: "STRING",
+        description: `タスクの期限日またはイベントの開催日。YYYY-MM-DD形式。年が記載されていない場合は本日${TODAY}の年を補完。特定できない場合は空文字。`,
+      },
+      assignedTo: {
+        type: "STRING",
+        description:
+          "担当者。テキスト内にママ・パパの指定があれば「ママ」または「パパ」を設定。なければ「共通」。",
+      },
+      type: {
+        type: "STRING",
+        description:
+          "タスク種別。購入・用意が必要なものは 'shopping'、提出・行動・行事は 'todo'。",
+      },
+      reminderAt: {
+        type: "STRING",
+        description:
+          "リマインダータイミング。期日があるものは '1day'、期日がないものは 'none'。",
+      },
+      confidence: {
+        type: "NUMBER",
+        description:
+          "この抽出の確信度（0〜1）。文書に明記されていて確実なものは0.9以上、推定が含まれる場合は0.5〜0.7。",
+      },
+    },
+    required: ["task", "dueDate", "assignedTo", "type", "reminderAt", "confidence"],
+  },
+};
+
+const RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    structuredText: {
+      type: "STRING",
+      description:
+        "スマートフォンの画面でも見やすくなるよう整形した日本語のMarkdownテキスト。",
+    },
+    todoDrafts: TODO_DRAFT_SCHEMA,
+  },
+  required: ["structuredText", "todoDrafts"],
+};
+
+function buildTextPrompt(rawOcrText: string, categoryName: string): string {
+  return `
+以下の「OCRで読み取った生のテキスト」を読み込んで分析し、整形テキストと予定・タスク・持ち物・買い物の抽出リストをJSONで出力してください。
+
+【本日の日付】${TODAY}
+
+【整形ルール】
+1. 無意味な改行やOCRミスによる空白を削除し、自然な文章に繋げてください。
+2. 重要セクション（「先生から」「お願い」「行事予定」など）には適切な見出し（### ####）を付けてください。
+3. 箇条書きにできる部分は「- 」形式に整理してください。
+4. 表として読み取れる部分はMarkdownテーブル形式に整形してください。
+5. 原文の意味を変更したり情報を捏造しないでください。
+6. 手書き文字で読み取りが不確かな箇所は〔？〕と表記してください。
+
+【カテゴリー】${categoryName}
+
+【OCR生テキスト】
+---
+${rawOcrText}
+---
+`.trim();
+}
+
+function buildImagePrompt(categoryName: string): string {
+  return `
+このプリント・文書の画像を読み取り、整形テキストと予定・タスク・持ち物・買い物の抽出リストをJSONで出力してください。
+
+【本日の日付】${TODAY}
+
+【OCRルール】
+1. 画像内の文字をすべて読み取ってください。傾きがあっても読んでください。
+2. 手書き文字や読み取りが不確かな箇所は〔？〕と表記してください。
+3. スタンプ・印鑑の文字も読み取ってください。
+
+【整形ルール】
+1. 重要セクション（「先生から」「お願い」「行事予定」「持ち物」「提出物」など）には見出し（### ####）を付けてください。
+2. 箇条書きにできる部分は「- 」形式に整理してください。
+3. 表として読み取れる部分はMarkdownテーブル形式に整形してください。
+4. 原文の意味を変更したり情報を捏造しないでください。
+
+【カテゴリー】${categoryName}
+`.trim();
+}
+
+function validateAndMapDrafts(
+  raw: Array<Record<string, unknown>>
+): OcrAnalysisResultBackend["todoDrafts"] {
+  return raw
+    .filter((d) => d && typeof d.task === "string" && (d.task as string).trim())
+    .map((d) => ({
+      task: (d.task as string).trim(),
+      dueDate: typeof d.dueDate === "string" ? d.dueDate : "",
+      assignedTo:
+        d.assignedTo === "ママ" || d.assignedTo === "パパ"
+          ? (d.assignedTo as string)
+          : "共通",
+      type: d.type === "shopping" ? ("shopping" as const) : ("todo" as const),
+      reminderAt:
+        d.reminderAt === "none" ||
+        d.reminderAt === "today" ||
+        d.reminderAt === "1day" ||
+        d.reminderAt === "3day"
+          ? (d.reminderAt as "none" | "today" | "1day" | "3day")
+          : "none",
+      confidence: typeof d.confidence === "number" ? Math.min(1, Math.max(0, d.confidence)) : 0.8,
+    }));
+}
+
 /**
- * OCR生テキストから、Geminiを使ってMarkdown構造化テキストと予定・タスクを同時にJSON抽出する
+ * OCR生テキストからGeminiで構造化テキストと予定を抽出する
  */
 export async function analyzeAndStructurizeOcrText(
   rawOcrText: string,
@@ -24,72 +149,14 @@ export async function analyzeAndStructurizeOcrText(
 ): Promise<OcrAnalysisResultBackend | null> {
   if (!ai) return null;
 
-  const prompt = `
-以下の「OCRで読み取った生のテキスト」を読み込んで分析し、スマートデバイス用の整形テキストと、予定・タスク・持ち物・買い物の抽出リストを出力してください。
-
-【整形ルール】
-1. 無意味な改行や、OCRの読み取りミスによる単語の途中の空白は削除し、自然な文章に繋げてください。
-2. 重要なセクション（例：「先生から」「家庭から」「行事予定」「お願い」など）には、適切な見出し（### や ####）を付与してください。
-3. 箇条書き（リスト）にできる部分は、積極的に「- 」を用いた箇条書きに直してください。
-4. 表（テーブル）として読み取れる部分は、Markdownのテーブル形式（| ヘッダー |）に整形してください。
-5. 原文の意味を変更したり、勝手に情報を捏造しないでください。読みやすさの整理のみを行ってください。
-
-【カテゴリー情報】
-このプリントは「${categoryName}」として分類されています。
-
-【OCR生テキスト】
----
-${rawOcrText}
----
-`;
-
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: prompt,
+      contents: buildTextPrompt(rawOcrText, categoryName),
       config: {
         responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            structuredText: {
-              type: "STRING",
-              description: "OCRで読み取った生のテキストを、スマートフォンの狭い画面でも見やすくなるように整形した日本語のMarkdownテキスト。"
-            },
-            todoDrafts: {
-              type: "ARRAY",
-              description: "テキストから抽出した提出物・持ち物・イベントなどのタスク（やること）およびお買い物（買うもの）の候補リスト。",
-              items: {
-                type: "OBJECT",
-                properties: {
-                  task: {
-                    type: "STRING",
-                    description: "タスク名、または用意・購入すべき物の名前（例: 「歯科検診アンケートの提出」「上履き・赤白帽の持参」「雑巾2枚の購入」）"
-                  },
-                  dueDate: {
-                    type: "STRING",
-                    description: "タスクの期限日、またはイベントの開催日。フォーマットは YYYY-MM-DD。年が記載されていない場合は現在の年（2026年）を補完してください。期限や日付が特定できない場合は空文字にしてください。"
-                  },
-                  assignedTo: {
-                    type: "STRING",
-                    description: "担当者。テキスト内にママ、パパ、パパさん、ママさん等の指定があればそれに応じた名前（ママ/パパ）を設定。特に指定がない場合は「共通」を設定。"
-                  },
-                  type: {
-                    type: "STRING",
-                    description: "タスクの種別。用意する物品や購入が必要なものは 'shopping'、提出・行動・行事予定は 'todo'。"
-                  },
-                  reminderAt: {
-                    type: "STRING",
-                    description: "リマインダーの初期タイミング設定。期日があるものは '1day'、期日がないものは 'none'。"
-                  }
-                },
-                required: ["task", "dueDate", "assignedTo", "type", "reminderAt"]
-              }
-            }
-          },
-          required: ["structuredText", "todoDrafts"]
-        }
-      }
+        responseSchema: RESPONSE_SCHEMA as any,
+      },
     });
 
     const responseText = response.text?.trim();
@@ -97,43 +164,71 @@ ${rawOcrText}
 
     const parsed = JSON.parse(responseText) as {
       structuredText?: string;
-      todoDrafts?: Array<{
-        task: string;
-        dueDate: string;
-        assignedTo: string;
-        type: string;
-        reminderAt: string;
-      }>;
+      todoDrafts?: Array<Record<string, unknown>>;
     };
-
-    const validDrafts = (parsed.todoDrafts || [])
-      .filter((d) => d && typeof d.task === "string" && d.task.trim())
-      .map((d) => ({
-        task: d.task.trim(),
-        dueDate: typeof d.dueDate === "string" ? d.dueDate : "",
-        assignedTo: d.assignedTo === "ママ" || d.assignedTo === "パパ" ? d.assignedTo : "共通",
-        type: d.type === "shopping" ? ("shopping" as const) : ("todo" as const),
-        reminderAt:
-          d.reminderAt === "none" ||
-          d.reminderAt === "today" ||
-          d.reminderAt === "1day" ||
-          d.reminderAt === "3day"
-            ? (d.reminderAt as "none" | "today" | "1day" | "3day")
-            : "none",
-      }));
 
     return {
       text: parsed.structuredText || rawOcrText,
-      todoDrafts: validDrafts,
+      todoDrafts: validateAndMapDrafts(parsed.todoDrafts || []),
     };
   } catch (error) {
-    console.error("Gemini JSON Analysis Error:", error);
+    console.error("Gemini text analysis error:", error);
     return null;
   }
 }
 
 /**
- * OCRでスキャンした荒いテキストデータを、Geminiを使ってスマホで見やすいMarkdown形式に構造化する（互換用）
+ * 画像（base64）をGemini Visionで直接OCR・構造化する
+ */
+export async function analyzeImageOcr(
+  base64Data: string,
+  mimeType: string,
+  categoryName: string
+): Promise<OcrAnalysisResultBackend | null> {
+  if (!ai) return null;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        {
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType as any,
+                data: base64Data,
+              },
+            },
+            { text: buildImagePrompt(categoryName) },
+          ],
+        },
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: RESPONSE_SCHEMA as any,
+      },
+    });
+
+    const responseText = response.text?.trim();
+    if (!responseText) return null;
+
+    const parsed = JSON.parse(responseText) as {
+      structuredText?: string;
+      todoDrafts?: Array<Record<string, unknown>>;
+    };
+
+    return {
+      text: parsed.structuredText || "",
+      todoDrafts: validateAndMapDrafts(parsed.todoDrafts || []),
+    };
+  } catch (error) {
+    console.error("Gemini vision OCR error:", error);
+    return null;
+  }
+}
+
+/**
+ * 互換用：OCRテキストを構造化して返す
  */
 export async function structurizeOcrText(
   rawOcrText: string,

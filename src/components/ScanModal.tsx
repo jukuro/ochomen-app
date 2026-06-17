@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useRef, useState } from "react";
 import {
   AlertCircle,
   Camera,
@@ -30,8 +31,8 @@ interface ScanModalProps {
   onResetScan: () => void;
   onToggleTargetChild: (childId: string) => void;
   onSelectCategory: (category: string) => void;
-  onScanNote: () => void;
-  onScanYearlyPlan: () => void;
+  onScanFile: (file: File) => void;
+  onScanText: (text: string) => void;
   onChangeOcrText: (text: string) => void;
   onAddTodoDraft: () => void;
   onUpdateTodoDraft: (
@@ -59,14 +60,17 @@ export function ScanModal({
   onResetScan,
   onToggleTargetChild,
   onSelectCategory,
-  onScanNote,
-  onScanYearlyPlan,
+  onScanFile,
+  onScanText,
   onChangeOcrText,
   onAddTodoDraft,
   onUpdateTodoDraft,
   onRemoveTodoDraft,
   onSubmit,
 }: ScanModalProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pasteText, setPasteText] = useState("");
+
   if (!open) return null;
 
   const headerTitle =
@@ -76,8 +80,34 @@ export function ScanModal({
       ? "PDF・ファイル読込"
       : "プリントスキャン";
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      onScanFile(file);
+      // reset so the same file can be re-selected
+      e.target.value = "";
+    }
+  };
+
+  const triggerFileInput = (accept: string) => {
+    if (fileInputRef.current) {
+      fileInputRef.current.accept = accept;
+      fileInputRef.current.click();
+    }
+  };
+
   return (
     <div className="absolute inset-0 bg-black/50 flex items-end z-50">
+      {/* hidden file input — shared by camera and pdf buttons */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
       <div className="bg-white w-full rounded-t-3xl p-5 space-y-4 max-h-[90%] overflow-y-auto animate-slide-up text-slate-800">
         <div className="flex justify-between items-center">
           <h3 className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -146,16 +176,20 @@ export function ScanModal({
                       <div className="flex gap-3">
                         <button
                           type="button"
-                          onClick={onScanNote}
+                          onClick={() =>
+                            triggerFileInput("image/*")
+                          }
                           className="flex-1 border-2 border-dashed border-teal-200 bg-teal-50/50 hover:bg-teal-50 rounded-xl p-6 flex flex-col items-center gap-1.5 text-teal-600 transition"
                         >
                           <Camera size={24} />
                           <span className="text-xs font-bold">手紙・配布物を撮影</span>
                         </button>
-                        
+
                         <button
                           type="button"
-                          onClick={onScanYearlyPlan}
+                          onClick={() =>
+                            triggerFileInput("image/*")
+                          }
                           className="flex-1 border-2 border-dashed border-amber-200 bg-amber-50/50 hover:bg-amber-50 rounded-xl p-6 flex flex-col items-center gap-1.5 text-amber-700 transition"
                         >
                           <FileText size={24} />
@@ -172,26 +206,25 @@ export function ScanModal({
                         <span className="text-xs font-bold text-slate-500 block mb-1">📋 コピペエリア</span>
                         <div className="flex gap-1.5">
                           <textarea
+                            value={pasteText}
+                            onChange={(e) => setPasteText(e.target.value)}
                             placeholder="メールやLINEの文面をここに貼り付けてください。"
                             rows={3}
-                            onPaste={(e) => {
-                              const pastedText = e.clipboardData.getData("Text");
-                              if (pastedText.trim()) {
-                                onScanNote();
-                              }
-                            }}
                             className="flex-1 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white resize-none outline-none focus:border-teal-500"
                           />
                           <button
                             type="button"
-                            onClick={onScanNote}
-                            className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 rounded-lg flex items-center justify-center shrink-0"
+                            onClick={() => {
+                              if (pasteText.trim()) onScanText(pasteText.trim());
+                            }}
+                            disabled={!pasteText.trim()}
+                            className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 rounded-lg flex items-center justify-center shrink-0 disabled:bg-slate-200 disabled:text-slate-400"
                           >
                             解析
                           </button>
                         </div>
                       </div>
-                      <p className="text-[10px] text-slate-400">※貼り付けると、AIがアサイン・日付を解析してやることを作成します。</p>
+                      <p className="text-[10px] text-slate-400">※貼り付けて「解析」を押すと、AIがアサイン・日付を解析してやることを作成します。</p>
                     </div>
                   )}
 
@@ -201,7 +234,9 @@ export function ScanModal({
                       <span className="text-xs font-bold text-slate-500 block">📄 ドキュメントファイル(PDF/画像)のアップロード</span>
                       <button
                         type="button"
-                        onClick={onScanNote}
+                        onClick={() =>
+                          triggerFileInput("image/*,.pdf,application/pdf")
+                        }
                         className="w-full py-4 bg-white border border-dashed border-indigo-300 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-indigo-50/30 transition shadow-sm"
                       >
                         <FileText size={18} />
@@ -214,7 +249,6 @@ export function ScanModal({
               )}
             </div>
           )}
-
 
           {scannedImage && (
             <div>
@@ -254,7 +288,7 @@ export function ScanModal({
                   className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 outline-none focus:border-teal-500"
                 />
                 <p className="text-xs text-slate-400 mt-1">
-                  AIが読み取りました。内容をご確認ください。
+                  AIが読み取りました。内容をご確認・修正ください。
                 </p>
               </div>
 
@@ -278,99 +312,112 @@ export function ScanModal({
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {todoDrafts.map((draft, index) => (
-                      <div
-                        key={draft.id}
-                        className="bg-white border border-amber-100 rounded-xl p-3 space-y-2"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-slate-400">
-                            候補 {index + 1}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => onRemoveTodoDraft(draft.id)}
-                            className="text-slate-400 hover:text-red-500 p-1"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                        {/* 種別選択 */}
-                        <div className="flex gap-2 text-xs">
-                          <button
-                            type="button"
-                            onClick={() => onUpdateTodoDraft(draft.id, { type: "todo" })}
-                            className={`flex-1 py-1 rounded-md font-bold text-center border transition ${
-                              draft.type === "todo" || !draft.type
-                                ? "bg-teal-50 border-teal-200 text-teal-700"
-                                : "bg-slate-50 border-slate-100 text-slate-400"
-                            }`}
-                          >
-                            📄 やること
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onUpdateTodoDraft(draft.id, { type: "shopping" })}
-                            className={`flex-1 py-1 rounded-md font-bold text-center border transition ${
-                              draft.type === "shopping"
-                                ? "bg-amber-50 border-amber-200 text-amber-700"
-                                : "bg-slate-50 border-slate-100 text-slate-400"
-                            }`}
-                          >
-                            🛒 買うもの
-                          </button>
-                        </div>
-                        <input
-                          type="text"
-                          value={draft.task}
-                          onChange={(event) =>
-                            onUpdateTodoDraft(draft.id, { task: event.target.value })
-                          }
-                          placeholder={draft.type === "shopping" ? "買うものの名前" : "やることの内容"}
-                          className="w-full border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 bg-white"
-                        />
-                        <div className="flex gap-1.5 flex-wrap">
+                    {todoDrafts.map((draft, index) => {
+                      const isLowConfidence =
+                        draft.confidence !== undefined && draft.confidence < 0.7;
+                      return (
+                        <div
+                          key={draft.id}
+                          className={`bg-white border rounded-xl p-3 space-y-2 ${
+                            isLowConfidence
+                              ? "border-amber-300"
+                              : "border-amber-100"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-400 flex items-center gap-1">
+                              候補 {index + 1}
+                              {isLowConfidence && (
+                                <span className="bg-amber-100 text-amber-700 text-[9px] font-bold px-1.5 py-0.5 rounded-full ml-1">
+                                  ⚠️ 要確認
+                                </span>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => onRemoveTodoDraft(draft.id)}
+                              className="text-slate-400 hover:text-red-500 p-1"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                          {/* 種別選択 */}
+                          <div className="flex gap-2 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => onUpdateTodoDraft(draft.id, { type: "todo" })}
+                              className={`flex-1 py-1 rounded-md font-bold text-center border transition ${
+                                draft.type === "todo" || !draft.type
+                                  ? "bg-teal-50 border-teal-200 text-teal-700"
+                                  : "bg-slate-50 border-slate-100 text-slate-400"
+                              }`}
+                            >
+                              📄 やること
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onUpdateTodoDraft(draft.id, { type: "shopping" })}
+                              className={`flex-1 py-1 rounded-md font-bold text-center border transition ${
+                                draft.type === "shopping"
+                                  ? "bg-amber-50 border-amber-200 text-amber-700"
+                                  : "bg-slate-50 border-slate-100 text-slate-400"
+                              }`}
+                            >
+                              🛒 買うもの
+                            </button>
+                          </div>
                           <input
-                            type="date"
-                            value={draft.dueDate}
+                            type="text"
+                            value={draft.task}
                             onChange={(event) =>
-                                onUpdateTodoDraft(draft.id, { dueDate: event.target.value })
+                              onUpdateTodoDraft(draft.id, { task: event.target.value })
                             }
-                            className="flex-1 min-w-[90px] border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white"
+                            placeholder={draft.type === "shopping" ? "買うものの名前" : "やることの内容"}
+                            className="w-full border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 bg-white"
                           />
-                          <select
-                            value={draft.assignedTo}
-                            onChange={(event) =>
-                              onUpdateTodoDraft(draft.id, {
-                                assignedTo: event.target.value as TodoAssignee,
-                              })
-                            }
-                            className="border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white"
-                          >
-                            <option value="共通">共通</option>
-                            {members.map((m) => (
-                              <option key={m.id} value={m.name}>
-                                {m.role} {m.name}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            value={draft.reminderAt || "1day"}
-                            onChange={(event) =>
-                              onUpdateTodoDraft(draft.id, {
-                                reminderAt: event.target.value as any,
-                              })
-                            }
-                            className="border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white flex-1 min-w-[80px]"
-                          >
-                            <option value="none">🔔 なし</option>
-                            <option value="today">🔔 当日</option>
-                            <option value="1day">🔔 1日前</option>
-                            <option value="3day">🔔 3日前</option>
-                          </select>
+                          <div className="flex gap-1.5 flex-wrap">
+                            <input
+                              type="date"
+                              value={draft.dueDate}
+                              onChange={(event) =>
+                                onUpdateTodoDraft(draft.id, { dueDate: event.target.value })
+                              }
+                              className="flex-1 min-w-[90px] border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white"
+                            />
+                            <select
+                              value={draft.assignedTo}
+                              onChange={(event) =>
+                                onUpdateTodoDraft(draft.id, {
+                                  assignedTo: event.target.value as TodoAssignee,
+                                })
+                              }
+                              className="border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white"
+                            >
+                              <option value="共通">共通</option>
+                              {members.map((m) => (
+                                <option key={m.id} value={m.name}>
+                                  {m.role} {m.name}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={draft.reminderAt || "1day"}
+                              onChange={(event) =>
+                                onUpdateTodoDraft(draft.id, {
+                                  reminderAt: event.target.value as "none" | "today" | "1day" | "3day",
+                                })
+                              }
+                              className="border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white flex-1 min-w-[80px]"
+                            >
+                              <option value="none">🔔 なし</option>
+                              <option value="today">🔔 当日</option>
+                              <option value="1day">🔔 1日前</option>
+                              <option value="3day">🔔 3日前</option>
+                            </select>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
