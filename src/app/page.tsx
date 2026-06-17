@@ -1035,16 +1035,14 @@ export default function App() {
 
   if (!hydrated) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-900">
+      <div className="flex items-center justify-center w-full bg-white" style={{ height: "100dvh" }}>
         <Loader2 className="animate-spin text-teal-400" size={32} />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 p-4">
-      <div className="relative w-[390px] h-[800px] bg-slate-50 border-[12px] border-slate-800 rounded-[40px] shadow-2xl flex flex-col overflow-hidden">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[120px] h-[25px] bg-slate-800 rounded-b-2xl z-50" />
+    <div className="relative w-full max-w-lg mx-auto bg-slate-50 flex flex-col overflow-hidden" style={{ height: "100dvh" }}>
 
         {showOnboarding && <Onboarding onComplete={handleOnboardingComplete} />}
 
@@ -1067,7 +1065,7 @@ export default function App() {
         />
 
         {/* ヘッダー */}
-        <header className="bg-white pt-8 pb-3 px-4 border-b border-slate-100 flex items-center justify-between sticky top-0 z-40">
+        <header className="bg-white pb-3 px-4 border-b border-slate-100 flex items-center justify-between sticky top-0 z-40" style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}>
           <div className="relative">
             <button
               onClick={() => setShowChildDropdown(!showChildDropdown)}
@@ -2227,7 +2225,7 @@ export default function App() {
         })()}
 
         {/* ボトムナビ */}
-        <nav className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-100 py-2 flex justify-around items-center z-40">
+        <nav className="bg-white border-t border-slate-100 py-2 flex justify-around items-center z-40 flex-shrink-0" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
           {(
             [
               { id: "home" as Screen, icon: Home, label: "ホーム" },
@@ -2257,7 +2255,7 @@ export default function App() {
               className="absolute inset-0 bg-black/15 z-20 cursor-default"
               onClick={() => setShowFabMenu(false)}
             />
-            <div className="absolute bottom-[8.5rem] right-5 flex flex-col items-end gap-2.5 z-30 animate-slide-up">
+            <div className="absolute bottom-[5.5rem] right-5 flex flex-col items-end gap-2.5 z-30 animate-slide-up" style={{ bottom: "calc(5.5rem + env(safe-area-inset-bottom))" }}>
               {/* 成長日記をつぶやく (AI Voice) */}
               <div className="flex items-center gap-2">
                 <span className="bg-pink-600 text-white text-[10px] font-bold py-1 px-2.5 rounded-lg shadow-md flex items-center gap-1">
@@ -2379,7 +2377,8 @@ export default function App() {
 
         <button
           onClick={() => setShowFabMenu(!showFabMenu)}
-          className={`absolute bottom-[4.5rem] right-5 w-14 h-14 text-white rounded-full flex items-center justify-center shadow-lg transition duration-200 active:scale-95 z-30 ${
+          style={{ bottom: "calc(4.5rem + env(safe-area-inset-bottom))" }}
+          className={`absolute right-5 w-14 h-14 text-white rounded-full flex items-center justify-center shadow-lg transition duration-200 active:scale-95 z-30 ${
             showFabMenu ? "bg-slate-700 rotate-45" : "bg-teal-600 hover:bg-teal-700"
           }`}
         >
@@ -2833,7 +2832,6 @@ export default function App() {
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 }

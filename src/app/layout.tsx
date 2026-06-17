@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP } from "next/font/google";
 import "./globals.css";
 
@@ -9,9 +9,27 @@ const notoSansJP = Noto_Sans_JP({
 });
 
 export const metadata: Metadata = {
-  title: "おたより帳 - 保育園のお帳面・お便り管理",
-  description:
-    "保育園のプリントをスキャンして、やること・提出期限を自動管理。家族で共有できるお帳面アプリ。",
+  title: "お帳面 - 保育園プリント管理",
+  description: "保育園のプリントをスキャンして、やること・提出期限を家族で管理",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "お帳面",
+  },
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+  themeColor: "#0f766e",
 };
 
 export default function RootLayout({
@@ -21,7 +39,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" className={`${notoSansJP.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col font-sans">{children}</body>
+      <body className="h-full font-sans bg-slate-50 overflow-hidden">{children}</body>
     </html>
   );
 }

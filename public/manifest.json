@@ -1,0 +1,19 @@
+{
+  "name": "お帳面 - 保育園プリント管理",
+  "short_name": "お帳面",
+  "description": "保育園のプリントをスキャンして、やること・提出期限を家族で管理",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f766e",
+  "orientation": "portrait",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
