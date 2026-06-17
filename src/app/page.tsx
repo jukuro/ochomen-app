@@ -62,6 +62,8 @@ export default function App() {
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightTodoId, setHighlightTodoId] = useState<string | null>(null);
+  const lastScanDataRef = useRef<{ base64: string; mimeType: string } | null>(null);
+  const [scanErrorType, setScanErrorType] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [editingCategoryIdx, setEditingCategoryIdx] = useState<number | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
@@ -403,43 +405,91 @@ export default function App() {
   };
 
   /** ScanModal 側で圧縮・回転済みの base64 を受け取ってAPIに投げる */
+  const runScanApi = async (base64: string, mimeType: string) => {
+    const response = await fetch("/api/scan-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base64, mimeType, categoryName: selectedCategory }),
+    });
+
+    const data = await response.json() as {
+      text?: string;
+      error?: string;
+      todoDrafts?: Array<{
+        task: string; dueDate: string; assignedTo: string;
+        type: "todo" | "shopping"; reminderAt: "none" | "today" | "1day" | "3day";
+        confidence?: number;
+      }>;
+    };
+
+    if (!response.ok) {
+      throw { status: response.status, errorCode: data.error || "OCR_FAILED" };
+    }
+    return data;
+  };
+
   const handleScanProcessed = async (base64: string, mimeType: string, previewUrl: string) => {
+    lastScanDataRef.current = { base64, mimeType };
+    setScanErrorType(null);
     setIsScanning(true);
     setScannedImage(previewUrl);
     try {
-      const response = await fetch("/api/scan-image", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base64, mimeType, categoryName: selectedCategory }),
-      });
-
-      if (!response.ok) {
-        showToast("画像の読み取りに失敗しました。再度お試しください。");
-        return;
+      let data;
+      try {
+        data = await runScanApi(base64, mimeType);
+      } catch (firstErr: any) {
+        if (firstErr?.status === 429 || firstErr?.errorCode === "RATE_LIMIT") {
+          showToast("AIが混み合っています。3秒後に自動リトライします...");
+          await new Promise((r) => setTimeout(r, 3000));
+          data = await runScanApi(base64, mimeType);
+        } else {
+          throw firstErr;
+        }
       }
 
-      const data = await response.json() as {
-        text?: string;
-        todoDrafts?: Array<{
-          task: string;
-          dueDate: string;
-          assignedTo: string;
-          type: "todo" | "shopping";
-          reminderAt: "none" | "today" | "1day" | "3day";
-          confidence?: number;
-        }>;
-      };
-
+      setScanErrorType(null);
       setOcrTextResult(data.text || "");
       setTodoDrafts(
         (data.todoDrafts || []).map((d) => ({ id: createLocalId("draft"), ...d }))
       );
-    } catch (error) {
-      console.error("scan image error:", error);
-      showToast("画像の読み取りでエラーが発生しました。");
+    } catch (error: any) {
+      const code = error?.errorCode || "OCR_FAILED";
+      setScanErrorType(code);
+      if (code === "RATE_LIMIT") {
+        showToast("AIが混み合っています。「もう一度読み取る」ボタンでリトライしてください。");
+      } else if (code === "AUTH_ERROR") {
+        showToast("API認証エラーです。設定を確認してください。");
+      } else {
+        showToast("画像の読み取りに失敗しました。「もう一度読み取る」でリトライできます。");
+      }
+      console.error("scan error:", error);
     } finally {
       setIsScanning(false);
     }
+  };
+
+  const handleRetryScan = () => {
+    if (!lastScanDataRef.current || !scannedImage) return;
+    const { base64, mimeType } = lastScanDataRef.current;
+    setScanErrorType(null);
+    setIsScanning(true);
+    runScanApi(base64, mimeType)
+      .then((data) => {
+        setScanErrorType(null);
+        setOcrTextResult(data.text || "");
+        setTodoDrafts(
+          (data.todoDrafts || []).map((d) => ({ id: createLocalId("draft"), ...d }))
+        );
+      })
+      .catch((error: any) => {
+        const code = error?.errorCode || "OCR_FAILED";
+        setScanErrorType(code);
+        showToast(code === "RATE_LIMIT"
+          ? "まだ混み合っています。少し待ってから再度お試しください。"
+          : "読み取りに失敗しました。しばらく待ってから再度お試しください。"
+        );
+      })
+      .finally(() => setIsScanning(false));
   };
 
   const handleScanText = async (text: string) => {
@@ -779,6 +829,8 @@ export default function App() {
     setOcrTextResult("");
     setTodoDrafts([]);
     setIsScanning(false);
+    setScanErrorType(null);
+    lastScanDataRef.current = null;
   };
 
   const updateTodoDraft = (
@@ -2370,6 +2422,8 @@ export default function App() {
           onUpdateTodoDraft={updateTodoDraft}
           onRemoveTodoDraft={removeTodoDraft}
           onSubmit={handleSubmitEntry}
+          scanErrorType={scanErrorType}
+          onRetry={handleRetryScan}
         />
         {/* 設定モーダル */}
         <SettingsModal

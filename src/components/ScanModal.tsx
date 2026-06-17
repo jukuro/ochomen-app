@@ -43,6 +43,8 @@ interface ScanModalProps {
   ) => void;
   onRemoveTodoDraft: (draftId: string) => void;
   onSubmit: () => void;
+  scanErrorType?: string | null;
+  onRetry?: () => void;
 }
 
 /** canvas で画像を回転・圧縮して base64 を返す */
@@ -113,6 +115,8 @@ export function ScanModal({
   onUpdateTodoDraft,
   onRemoveTodoDraft,
   onSubmit,
+  scanErrorType,
+  onRetry,
 }: ScanModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -401,6 +405,35 @@ export function ScanModal({
                   <X size={12} />
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* ── スキャン失敗時のリトライUI ── */}
+          {scannedImage && !ocrTextResult && !isScanning && scanErrorType && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-bold text-red-700">読み取りに失敗しました</p>
+                  <p className="text-xs text-red-500 mt-0.5">
+                    {scanErrorType === "RATE_LIMIT"
+                      ? "AIが混み合っています。少し待ってからリトライしてください。"
+                      : scanErrorType === "AUTH_ERROR"
+                      ? "API認証エラーです。管理者にお問い合わせください。"
+                      : "通信エラーまたはAI処理エラーです。リトライしてください。"}
+                  </p>
+                </div>
+              </div>
+              {onRetry && scanErrorType !== "AUTH_ERROR" && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold flex items-center justify-center gap-2 transition active:scale-95"
+                >
+                  <Sparkles size={14} />
+                  もう一度AIで読み取る
+                </button>
+              )}
             </div>
           )}
 

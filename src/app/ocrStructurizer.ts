@@ -222,8 +222,9 @@ export async function analyzeImageOcr(
       todoDrafts: validateAndMapDrafts(parsed.todoDrafts || []),
     };
   } catch (error) {
-    console.error("Gemini vision OCR error:", error);
-    return null;
+    const errMsg = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    console.error("Gemini vision OCR error:", errMsg);
+    throw error;
   }
 }
 

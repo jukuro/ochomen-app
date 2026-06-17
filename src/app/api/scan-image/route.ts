@@ -23,12 +23,8 @@ export async function POST(request: Request) {
     }
 
     const result = await analyzeImageOcr(base64, mimeType, categoryName);
-
     if (!result) {
-      return NextResponse.json(
-        { error: "OCR failed. GEMINI_API_KEY may not be configured." },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "OCR_FAILED", detail: "No API key configured." }, { status: 500 });
     }
 
     return NextResponse.json({
@@ -36,10 +32,22 @@ export async function POST(request: Request) {
       todoDrafts: result.todoDrafts,
     });
   } catch (error) {
-    console.error("scan-image API error:", error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error("scan-image API error:", errMsg);
+
+    const isRateLimit = errMsg.includes("429") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("rate");
+    const isAuth = errMsg.includes("403") || errMsg.toLowerCase().includes("permission") || errMsg.toLowerCase().includes("api key");
+
     return NextResponse.json(
-      { error: "Failed to process image." },
-      { status: 500 }
+      {
+        error: isRateLimit
+          ? "RATE_LIMIT"
+          : isAuth
+          ? "AUTH_ERROR"
+          : "OCR_FAILED",
+        detail: errMsg,
+      },
+      { status: isRateLimit ? 429 : 500 }
     );
   }
 }
