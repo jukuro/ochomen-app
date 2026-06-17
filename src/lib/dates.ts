@@ -29,3 +29,11 @@ export function isTomorrow(dateStr: string, today = APP_TODAY): boolean {
   tomorrow.setDate(tomorrow.getDate() + 1);
   return dateStr === tomorrow.toISOString().slice(0, 10);
 }
+
+/** "2026-06-20" → "6/20" */
+export function formatShortDate(dateStr: string): string {
+  if (!dateStr) return "";
+  const m = Number(dateStr.slice(5, 7));
+  const d = Number(dateStr.slice(8, 10));
+  return `${m}/${d}`;
+}

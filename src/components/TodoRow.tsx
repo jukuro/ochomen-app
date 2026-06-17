@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ArrowRight, ShoppingBag, ClipboardList, Bell, Edit, Trash2, Check, X } from "lucide-react";
 import type { Child, Entry, Todo, Member } from "@/lib/types";
-import { formatRelativeDate, isOverdue, isToday } from "@/lib/dates";
+import { formatRelativeDate, formatShortDate, isOverdue, isToday } from "@/lib/dates";
 
 interface TodoRowProps {
   todo: Todo;
@@ -255,7 +255,7 @@ export function TodoRow({
             </p>
             {hasAlarm && <Bell size={12} className="text-teal-600 flex-shrink-0" />}
           </div>
-          <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
+          <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
             <span className="flex items-center gap-0.5">
               {isShopping ? <ShoppingBag size={10} className="text-amber-600" /> : <ClipboardList size={10} className="text-teal-600" />}
               {isShopping ? "買い物" : "やること"}
@@ -264,6 +264,14 @@ export function TodoRow({
             <span>{primaryChild?.name.split(" ")[0] || "共通"}</span>
             <span>·</span>
             <span>担当: {assigneeLabel}</span>
+            {parentEntry && (
+              <>
+                <span>·</span>
+                <span className="text-[9px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 truncate max-w-[80px]">
+                  {parentEntry.category}
+                </span>
+              </>
+            )}
           </p>
         </div>
       </div>
@@ -295,8 +303,7 @@ export function TodoRow({
             元書類
           </button>
         )}
-        <span
-          className={`text-xs font-bold px-2 py-1 rounded-lg ${
+        <div className={`text-[10px] font-bold px-2 py-1 rounded-lg text-center leading-tight ${
             overdue
               ? "text-red-600 bg-red-100"
               : isToday(todo.dueDate)
@@ -304,8 +311,9 @@ export function TodoRow({
                 : "text-slate-500 bg-slate-100"
           }`}
         >
-          {formatRelativeDate(todo.dueDate)}
-        </span>
+          <div>{formatShortDate(todo.dueDate)}</div>
+          <div className="text-[8px] opacity-70">{formatRelativeDate(todo.dueDate)}</div>
+        </div>
       </div>
     </div>
   );

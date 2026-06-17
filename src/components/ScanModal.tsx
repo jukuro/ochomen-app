@@ -122,6 +122,7 @@ export function ScanModal({
   const [rotation, setRotation] = useState(0);
   const [isCompressing, setIsCompressing] = useState(false);
   const [pasteText, setPasteText] = useState("");
+  const [showOcrFullscreen, setShowOcrFullscreen] = useState(false);
 
   if (!open) return null;
 
@@ -407,20 +408,63 @@ export function ScanModal({
           {ocrTextResult && (
             <>
               <div>
-                <label className="text-xs font-bold text-slate-400 block mb-1.5 flex items-center gap-1">
+                <label className="text-xs font-bold text-slate-400 flex items-center gap-1 mb-1.5">
                   <Sparkles size={12} className="text-teal-500" />
                   AI抽出テキスト（編集可）
+                  <button
+                    type="button"
+                    onClick={() => setShowOcrFullscreen(true)}
+                    className="ml-auto text-[10px] text-teal-600 font-bold bg-teal-50 px-2 py-0.5 rounded-full"
+                  >
+                    全画面で確認 ↗
+                  </button>
                 </label>
                 <textarea
                   value={ocrTextResult}
                   onChange={(event) => onChangeOcrText(event.target.value)}
+                  onClick={() => setShowOcrFullscreen(true)}
                   rows={4}
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 outline-none focus:border-teal-500"
+                  readOnly
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 outline-none focus:border-teal-500 cursor-pointer"
                 />
                 <p className="text-xs text-slate-400 mt-1">
-                  AIが読み取りました。内容をご確認・修正ください。
+                  タップで全画面表示・編集できます。
                 </p>
               </div>
+
+              {/* 全画面テキストモーダル */}
+              {showOcrFullscreen && (
+                <div className="absolute inset-0 bg-white z-50 flex flex-col">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-teal-500" />
+                      <span className="text-sm font-bold text-slate-700">AI抽出テキスト</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowOcrFullscreen(false)}
+                      className="p-1.5 bg-slate-100 rounded-lg text-slate-500 hover:bg-slate-200"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <textarea
+                    value={ocrTextResult}
+                    onChange={(event) => onChangeOcrText(event.target.value)}
+                    className="flex-1 p-4 text-sm text-slate-800 resize-none outline-none leading-relaxed"
+                    autoFocus
+                  />
+                  <div className="px-4 py-3 border-t border-slate-100 bg-slate-50">
+                    <button
+                      type="button"
+                      onClick={() => setShowOcrFullscreen(false)}
+                      className="w-full py-2.5 rounded-xl bg-teal-600 text-white text-sm font-bold"
+                    >
+                      確認完了
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="border border-amber-100 bg-amber-50/30 rounded-xl p-3 space-y-3">
                 <div className="flex items-center justify-between gap-2">

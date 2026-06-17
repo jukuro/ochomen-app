@@ -19,6 +19,7 @@ import {
   Mic,
   TrendingUp,
   Sparkles,
+  Search,
 } from "lucide-react";
 import type { Todo, Entry, Child, Screen, Plan, TodoDraft, Member, Diary, Milestone } from "@/lib/types";
 import { APP_TODAY, isOverdue, isToday, isTomorrow } from "@/lib/dates";
@@ -59,6 +60,8 @@ export default function App() {
 
   const [isScanModalOpen, setIsScanModalOpen] = useState(false);
   const [showFabMenu, setShowFabMenu] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [highlightTodoId, setHighlightTodoId] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [editingCategoryIdx, setEditingCategoryIdx] = useState<number | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
@@ -256,9 +259,10 @@ export default function App() {
     );
   };
 
-  const scrollToEntry = (entryId: string) => {
+  const scrollToEntry = (entryId: string, todoId?: string) => {
     markEntryRead(entryId);
     setCurrentScreen("timeline");
+    if (todoId) setHighlightTodoId(todoId);
     setTimeout(() => {
       const element = entryRefs.current[entryId];
       if (element) {
@@ -268,6 +272,12 @@ export default function App() {
           element.classList.remove("ring-4", "ring-teal-500", "ring-opacity-50");
         }, 1500);
         setViewModes((prev) => ({ ...prev, [entryId]: "image" }));
+        if (todoId) {
+          setTimeout(() => {
+            const todoEl = document.getElementById(`todo-entry-${todoId}`);
+            if (todoEl) todoEl.scrollIntoView({ behavior: "smooth", block: "center" });
+          }, 400);
+        }
       }
     }, 150);
   };
@@ -954,6 +964,7 @@ export default function App() {
           viewMode={currentMode}
           isZoomed={zoomedImageId === entry.id}
           categories={categories}
+          highlightTodoId={highlightTodoId || undefined}
           onMarkRead={markEntryRead}
           onSetViewMode={(entryId, mode) =>
             setViewModes((prev) => ({ ...prev, [entryId]: mode }))
@@ -1042,6 +1053,87 @@ export default function App() {
         {/* ホーム */}
         {currentScreen === "home" && (
           <div className="flex-1 overflow-y-auto p-4 space-y-5 pb-28">
+            {/* 横断検索バー */}
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="やること・書類をキーワード検索..."
+                className="w-full pl-8 pr-8 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-800 outline-none focus:border-teal-500 shadow-sm"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            {/* 検索結果 */}
+            {searchQuery.trim() && (() => {
+              const q = searchQuery.trim().toLowerCase();
+              const matchedTodos = allTodos.filter((t) =>
+                t.task.toLowerCase().includes(q)
+              );
+              const matchedEntries = filteredEntries.filter((e) =>
+                e.category.toLowerCase().includes(q) ||
+                (e.ocrText || "").toLowerCase().includes(q)
+              );
+              const hasResults = matchedTodos.length > 0 || matchedEntries.length > 0;
+              return (
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-slate-400">
+                    「{searchQuery}」の検索結果
+                    {hasResults ? ` (やること ${matchedTodos.length}件 / 書類 ${matchedEntries.length}件)` : " — 見つかりませんでした"}
+                  </p>
+                  {matchedTodos.map((t) => {
+                    const srcEntry = entries.find((e) => e.id === t.originalEntryId);
+                    return (
+                      <div key={t.id} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
+                        <p className="text-sm font-medium text-slate-800">{t.task}</p>
+                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
+                          <span>{t.dueDate ? `${Number(t.dueDate.slice(5,7))}/${Number(t.dueDate.slice(8,10))}` : "日付なし"}</span>
+                          {srcEntry && (
+                            <>
+                              <span>·</span>
+                              <button
+                                type="button"
+                                onClick={() => { setSearchQuery(""); scrollToEntry(srcEntry.id, t.id); }}
+                                className="text-teal-600 font-bold flex items-center gap-0.5"
+                              >
+                                {srcEntry.category} ↩
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {matchedEntries.map((e) => (
+                    <div key={e.id} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full">{e.category}</span>
+                        <span className="text-xs text-slate-400">{e.date}</span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1.5 line-clamp-2">{e.ocrText?.slice(0, 80)}...</p>
+                      <button
+                        type="button"
+                        onClick={() => { setSearchQuery(""); scrollToEntry(e.id); }}
+                        className="mt-2 text-xs text-teal-600 font-bold"
+                      >
+                        書類を開く ↩
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
             <div>
               <h2 className="text-lg font-bold text-slate-800">6月15日（月）</h2>
               <p className="text-sm text-slate-500 mt-0.5">
@@ -1100,10 +1192,10 @@ export default function App() {
                     {tonightOneThing.originalEntryId && tonightOneThing.originalEntryId !== "manual_shopping" && (
                       <button
                         type="button"
-                        onClick={() => scrollToEntry(tonightOneThing.originalEntryId)}
+                        onClick={() => scrollToEntry(tonightOneThing.originalEntryId, tonightOneThing.id)}
                         className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700 transition active:scale-95"
                       >
-                        詳細 ↩
+                        元書類を確認 ↩
                       </button>
                     )}
                   </div>

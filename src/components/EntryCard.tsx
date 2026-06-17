@@ -12,6 +12,7 @@ interface EntryCardProps {
   viewMode: "ocr" | "image";
   isZoomed: boolean;
   categories: string[];
+  highlightTodoId?: string;
   onMarkRead: (entryId: string) => void;
   onSetViewMode: (entryId: string, mode: "ocr" | "image") => void;
   onToggleZoom: (entryId: string) => void;
@@ -26,6 +27,7 @@ export function EntryCard({
   viewMode,
   isZoomed,
   categories,
+  highlightTodoId,
   onMarkRead,
   onSetViewMode,
   onToggleZoom,
@@ -234,10 +236,13 @@ export function EntryCard({
       {entry.todos?.map((todo) => (
         <div
           key={todo.id}
-          className={`p-3 rounded-xl border flex items-start gap-3 ${
+          id={`todo-entry-${todo.id}`}
+          className={`p-3 rounded-xl border flex items-start gap-3 transition-all duration-300 ${
             todo.isCompleted
               ? "bg-slate-50 border-slate-200 text-slate-400 line-through"
-              : "bg-amber-50/50 border-amber-100"
+              : highlightTodoId === todo.id
+                ? "bg-yellow-50 border-yellow-400 ring-2 ring-yellow-300 shadow-md"
+                : "bg-amber-50/50 border-amber-100"
           }`}
         >
           <input
