@@ -7,10 +7,11 @@ import {
   Camera,
   FileText,
   Loader2,
+  RotateCcw,
+  RotateCw,
   Sparkles,
   Trash2,
   X,
-  Plus,
 } from "lucide-react";
 import type { Child, TodoAssignee, TodoDraft, Member } from "@/lib/types";
 
@@ -31,7 +32,8 @@ interface ScanModalProps {
   onResetScan: () => void;
   onToggleTargetChild: (childId: string) => void;
   onSelectCategory: (category: string) => void;
-  onScanFile: (file: File) => void;
+  /** 圧縮・回転済み base64 + mimeType + プレビューURL を渡す */
+  onScanProcessed: (base64: string, mimeType: string, previewUrl: string) => void;
   onScanText: (text: string) => void;
   onChangeOcrText: (text: string) => void;
   onAddTodoDraft: () => void;
@@ -43,6 +45,51 @@ interface ScanModalProps {
   onSubmit: () => void;
 }
 
+/** canvas で画像を回転・圧縮して base64 を返す */
+async function compressAndRotate(
+  file: File,
+  rotationDeg: number
+): Promise<{ base64: string; mimeType: string; previewUrl: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new globalThis.Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX_SIDE = 1600;
+      const srcW = img.naturalWidth;
+      const srcH = img.naturalHeight;
+
+      // 90°/270° のときは幅と高さを入れ替える
+      const swap = rotationDeg === 90 || rotationDeg === 270;
+      const outW = swap ? srcH : srcW;
+      const outH = swap ? srcW : srcH;
+
+      const scale = Math.min(1, MAX_SIDE / Math.max(outW, outH));
+      const canvasW = Math.round(outW * scale);
+      const canvasH = Math.round(outH * scale);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = canvasW;
+      canvas.height = canvasH;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { reject(new Error("canvas unavailable")); return; }
+
+      ctx.translate(canvasW / 2, canvasH / 2);
+      ctx.rotate((rotationDeg * Math.PI) / 180);
+      ctx.drawImage(img, -srcW * scale / 2, -srcH * scale / 2, srcW * scale, srcH * scale);
+
+      URL.revokeObjectURL(objectUrl);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      resolve({
+        base64: dataUrl.split(",")[1],
+        mimeType: "image/jpeg",
+        previewUrl: dataUrl,
+      });
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("image load failed")); };
+    img.src = objectUrl;
+  });
+}
+
 export function ScanModal({
   open,
   childrenProfiles,
@@ -51,7 +98,6 @@ export function ScanModal({
   targetChildIds,
   selectedCategory,
   importMethod,
-  onSelectImportMethod,
   scannedImage,
   ocrTextResult,
   isScanning,
@@ -60,7 +106,7 @@ export function ScanModal({
   onResetScan,
   onToggleTargetChild,
   onSelectCategory,
-  onScanFile,
+  onScanProcessed,
   onScanText,
   onChangeOcrText,
   onAddTodoDraft,
@@ -69,6 +115,12 @@ export function ScanModal({
   onSubmit,
 }: ScanModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 選択済みファイル（スキャン前の回転・確認ステップ）
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingPreviewUrl, setPendingPreviewUrl] = useState<string | null>(null);
+  const [rotation, setRotation] = useState(0);
+  const [isCompressing, setIsCompressing] = useState(false);
   const [pasteText, setPasteText] = useState("");
 
   if (!open) return null;
@@ -82,11 +134,12 @@ export function ScanModal({
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      onScanFile(file);
-      // reset so the same file can be re-selected
-      e.target.value = "";
-    }
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setPendingFile(file);
+    setPendingPreviewUrl(url);
+    setRotation(0);
+    e.target.value = "";
   };
 
   const triggerFileInput = (accept: string) => {
@@ -96,9 +149,35 @@ export function ScanModal({
     }
   };
 
+  const handleRotate = (dir: "left" | "right") => {
+    setRotation((prev) => (prev + (dir === "right" ? 90 : 270)) % 360);
+  };
+
+  const handleStartScan = async () => {
+    if (!pendingFile) return;
+    setIsCompressing(true);
+    try {
+      const { base64, mimeType, previewUrl } = await compressAndRotate(pendingFile, rotation);
+      if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+      setPendingFile(null);
+      setPendingPreviewUrl(null);
+      onScanProcessed(base64, mimeType, previewUrl);
+    } catch {
+      alert("画像の処理に失敗しました。別の画像をお試しください。");
+    } finally {
+      setIsCompressing(false);
+    }
+  };
+
+  const handleResetPending = () => {
+    if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+    setPendingFile(null);
+    setPendingPreviewUrl(null);
+    setRotation(0);
+  };
+
   return (
     <div className="absolute inset-0 bg-black/50 flex items-end z-50">
-      {/* hidden file input — shared by camera and pdf buttons */}
       <input
         ref={fileInputRef}
         type="file"
@@ -119,10 +198,9 @@ export function ScanModal({
         </div>
 
         <div className="space-y-3">
+          {/* 対象メンバー */}
           <div>
-            <label className="text-xs font-bold text-slate-400 block mb-1.5">
-              対象メンバー
-            </label>
+            <label className="text-xs font-bold text-slate-400 block mb-1.5">対象メンバー</label>
             <div className="flex gap-2 flex-wrap">
               {childrenProfiles.map((child) => (
                 <button
@@ -141,10 +219,9 @@ export function ScanModal({
             </div>
           </div>
 
+          {/* カテゴリー */}
           <div>
-            <label className="text-xs font-bold text-slate-400 block mb-1.5">
-              カテゴリー
-            </label>
+            <label className="text-xs font-bold text-slate-400 block mb-1.5">カテゴリー</label>
             <select
               value={selectedCategory}
               onChange={(event) => onSelectCategory(event.target.value)}
@@ -158,38 +235,31 @@ export function ScanModal({
             </select>
           </div>
 
-          {!ocrTextResult && (
+          {/* ── ファイル選択前のスキャンボタン ── */}
+          {!pendingFile && !ocrTextResult && (
             <div className="space-y-3 pt-1">
               {isScanning ? (
                 <div className="border-2 border-dashed border-teal-300 bg-teal-50 rounded-xl p-8 flex flex-col items-center gap-2">
                   <Loader2 className="animate-spin text-teal-600" />
-                  <span className="text-sm text-teal-600 font-bold">
-                    AIが読み取り中...
-                  </span>
+                  <span className="text-sm text-teal-600 font-bold">AIが読み取り中...</span>
                 </div>
               ) : (
                 <>
-                  {/* カメラ読み込み */}
                   {importMethod === "camera" && (
                     <div className="space-y-2">
                       <span className="text-xs font-bold text-slate-400 block">写真をスキャン</span>
                       <div className="flex gap-3">
                         <button
                           type="button"
-                          onClick={() =>
-                            triggerFileInput("image/*")
-                          }
+                          onClick={() => triggerFileInput("image/*")}
                           className="flex-1 border-2 border-dashed border-teal-200 bg-teal-50/50 hover:bg-teal-50 rounded-xl p-6 flex flex-col items-center gap-1.5 text-teal-600 transition"
                         >
                           <Camera size={24} />
                           <span className="text-xs font-bold">手紙・配布物を撮影</span>
                         </button>
-
                         <button
                           type="button"
-                          onClick={() =>
-                            triggerFileInput("image/*")
-                          }
+                          onClick={() => triggerFileInput("image/*")}
                           className="flex-1 border-2 border-dashed border-amber-200 bg-amber-50/50 hover:bg-amber-50 rounded-xl p-6 flex flex-col items-center gap-1.5 text-amber-700 transition"
                         >
                           <FileText size={24} />
@@ -199,44 +269,36 @@ export function ScanModal({
                     </div>
                   )}
 
-                  {/* テキストコピペ */}
                   {importMethod === "paste" && (
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                      <div>
-                        <span className="text-xs font-bold text-slate-500 block mb-1">📋 コピペエリア</span>
-                        <div className="flex gap-1.5">
-                          <textarea
-                            value={pasteText}
-                            onChange={(e) => setPasteText(e.target.value)}
-                            placeholder="メールやLINEの文面をここに貼り付けてください。"
-                            rows={3}
-                            className="flex-1 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white resize-none outline-none focus:border-teal-500"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (pasteText.trim()) onScanText(pasteText.trim());
-                            }}
-                            disabled={!pasteText.trim()}
-                            className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 rounded-lg flex items-center justify-center shrink-0 disabled:bg-slate-200 disabled:text-slate-400"
-                          >
-                            解析
-                          </button>
-                        </div>
+                      <span className="text-xs font-bold text-slate-500 block mb-1">📋 コピペエリア</span>
+                      <div className="flex gap-1.5">
+                        <textarea
+                          value={pasteText}
+                          onChange={(e) => setPasteText(e.target.value)}
+                          placeholder="メールやLINEの文面をここに貼り付けてください。"
+                          rows={3}
+                          className="flex-1 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white resize-none outline-none focus:border-teal-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => { if (pasteText.trim()) onScanText(pasteText.trim()); }}
+                          disabled={!pasteText.trim()}
+                          className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 rounded-lg flex items-center justify-center shrink-0 disabled:bg-slate-200 disabled:text-slate-400"
+                        >
+                          解析
+                        </button>
                       </div>
                       <p className="text-[10px] text-slate-400">※貼り付けて「解析」を押すと、AIがアサイン・日付を解析してやることを作成します。</p>
                     </div>
                   )}
 
-                  {/* PDF/ファイル選択 */}
                   {importMethod === "pdf" && (
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 flex flex-col items-center gap-3">
                       <span className="text-xs font-bold text-slate-500 block">📄 ドキュメントファイル(PDF/画像)のアップロード</span>
                       <button
                         type="button"
-                        onClick={() =>
-                          triggerFileInput("image/*,.pdf,application/pdf")
-                        }
+                        onClick={() => triggerFileInput("image/*,.pdf,application/pdf")}
                         className="w-full py-4 bg-white border border-dashed border-indigo-300 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-indigo-50/30 transition shadow-sm"
                       >
                         <FileText size={18} />
@@ -250,11 +312,78 @@ export function ScanModal({
             </div>
           )}
 
-          {scannedImage && (
+          {/* ── 選択済み・回転確認ステップ ── */}
+          {pendingFile && pendingPreviewUrl && (
+            <div className="space-y-3">
+              <div className="relative border border-slate-200 rounded-xl overflow-hidden bg-slate-50 p-3">
+                {/* プレビュー画像（CSS で回転のみ表示） */}
+                <div className="flex justify-center items-center min-h-40 overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={pendingPreviewUrl}
+                    alt="プレビュー"
+                    style={{ transform: `rotate(${rotation}deg)`, transition: "transform 0.3s", maxHeight: "240px", maxWidth: "100%", objectFit: "contain" }}
+                  />
+                </div>
+
+                {/* 撮り直しボタン */}
+                <button
+                  type="button"
+                  onClick={handleResetPending}
+                  className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full p-1.5 shadow transition"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+
+              {/* 回転ボタン */}
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleRotate("left")}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl transition"
+                >
+                  <RotateCcw size={14} /> 左90°
+                </button>
+                <span className="text-xs text-slate-400">{rotation}°</span>
+                <button
+                  type="button"
+                  onClick={() => handleRotate("right")}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl transition"
+                >
+                  右90° <RotateCw size={14} />
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400 text-center">
+                プリントが横向き・逆さの場合は回転してから「スキャン開始」を押してください
+              </p>
+
+              {/* スキャン開始ボタン */}
+              <button
+                type="button"
+                onClick={handleStartScan}
+                disabled={isCompressing}
+                className="w-full py-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:bg-slate-200 disabled:text-slate-400 transition"
+              >
+                {isCompressing ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    処理中...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={16} />
+                    AIでスキャン開始
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* ── スキャン済み画像プレビュー ── */}
+          {scannedImage && !pendingFile && (
             <div>
-              <label className="text-xs font-bold text-slate-400 block mb-1.5">
-                スキャン画像
-              </label>
+              <label className="text-xs font-bold text-slate-400 block mb-1.5">スキャン画像</label>
               <div className="relative border border-slate-200 rounded-xl overflow-hidden bg-slate-50 p-2">
                 <Image
                   src={scannedImage}
@@ -274,6 +403,7 @@ export function ScanModal({
             </div>
           )}
 
+          {/* ── OCR結果・タスク候補 ── */}
           {ocrTextResult && (
             <>
               <div>
@@ -307,21 +437,16 @@ export function ScanModal({
                 </div>
 
                 {todoDrafts.length === 0 ? (
-                  <p className="text-xs text-slate-400">
-                    必要な持ち物や提出物があれば追加できます。
-                  </p>
+                  <p className="text-xs text-slate-400">必要な持ち物や提出物があれば追加できます。</p>
                 ) : (
                   <div className="space-y-3">
                     {todoDrafts.map((draft, index) => {
-                      const isLowConfidence =
-                        draft.confidence !== undefined && draft.confidence < 0.7;
+                      const isLowConfidence = draft.confidence !== undefined && draft.confidence < 0.7;
                       return (
                         <div
                           key={draft.id}
                           className={`bg-white border rounded-xl p-3 space-y-2 ${
-                            isLowConfidence
-                              ? "border-amber-300"
-                              : "border-amber-100"
+                            isLowConfidence ? "border-amber-300" : "border-amber-100"
                           }`}
                         >
                           <div className="flex items-center justify-between">
@@ -341,7 +466,6 @@ export function ScanModal({
                               <Trash2 size={14} />
                             </button>
                           </div>
-                          {/* 種別選択 */}
                           <div className="flex gap-2 text-xs">
                             <button
                               type="button"
@@ -369,9 +493,7 @@ export function ScanModal({
                           <input
                             type="text"
                             value={draft.task}
-                            onChange={(event) =>
-                              onUpdateTodoDraft(draft.id, { task: event.target.value })
-                            }
+                            onChange={(event) => onUpdateTodoDraft(draft.id, { task: event.target.value })}
                             placeholder={draft.type === "shopping" ? "買うものの名前" : "やることの内容"}
                             className="w-full border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 bg-white"
                           />
@@ -379,34 +501,22 @@ export function ScanModal({
                             <input
                               type="date"
                               value={draft.dueDate}
-                              onChange={(event) =>
-                                onUpdateTodoDraft(draft.id, { dueDate: event.target.value })
-                              }
+                              onChange={(event) => onUpdateTodoDraft(draft.id, { dueDate: event.target.value })}
                               className="flex-1 min-w-[90px] border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white"
                             />
                             <select
                               value={draft.assignedTo}
-                              onChange={(event) =>
-                                onUpdateTodoDraft(draft.id, {
-                                  assignedTo: event.target.value as TodoAssignee,
-                                })
-                              }
+                              onChange={(event) => onUpdateTodoDraft(draft.id, { assignedTo: event.target.value as TodoAssignee })}
                               className="border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white"
                             >
                               <option value="共通">共通</option>
                               {members.map((m) => (
-                                <option key={m.id} value={m.name}>
-                                  {m.role} {m.name}
-                                </option>
+                                <option key={m.id} value={m.name}>{m.role} {m.name}</option>
                               ))}
                             </select>
                             <select
                               value={draft.reminderAt || "1day"}
-                              onChange={(event) =>
-                                onUpdateTodoDraft(draft.id, {
-                                  reminderAt: event.target.value as "none" | "today" | "1day" | "3day",
-                                })
-                              }
+                              onChange={(event) => onUpdateTodoDraft(draft.id, { reminderAt: event.target.value as "none" | "today" | "1day" | "3day" })}
                               className="border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white flex-1 min-w-[80px]"
                             >
                               <option value="none">🔔 なし</option>

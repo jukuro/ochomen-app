@@ -392,35 +392,19 @@ export default function App() {
     showToast(`${name}さんを家族メンバーに追加しました`);
   };
 
-  const handleScanFile = async (file: File) => {
+  /** ScanModal 側で圧縮・回転済みの base64 を受け取ってAPIに投げる */
+  const handleScanProcessed = async (base64: string, mimeType: string, previewUrl: string) => {
     setIsScanning(true);
+    setScannedImage(previewUrl);
     try {
-      // ファイルをbase64に変換
-      const arrayBuffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = "";
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64 = btoa(binary);
-
-      // プレビュー用のObject URLを生成
-      const previewUrl = URL.createObjectURL(file);
-      setScannedImage(previewUrl);
-
       const response = await fetch("/api/scan-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          base64,
-          mimeType: file.type || "image/jpeg",
-          categoryName: selectedCategory,
-        }),
+        body: JSON.stringify({ base64, mimeType, categoryName: selectedCategory }),
       });
 
       if (!response.ok) {
         showToast("画像の読み取りに失敗しました。再度お試しください。");
-        setIsScanning(false);
         return;
       }
 
@@ -438,13 +422,10 @@ export default function App() {
 
       setOcrTextResult(data.text || "");
       setTodoDrafts(
-        (data.todoDrafts || []).map((d) => ({
-          id: createLocalId("draft"),
-          ...d,
-        }))
+        (data.todoDrafts || []).map((d) => ({ id: createLocalId("draft"), ...d }))
       );
     } catch (error) {
-      console.error("scan file error:", error);
+      console.error("scan image error:", error);
       showToast("画像の読み取りでエラーが発生しました。");
     } finally {
       setIsScanning(false);
@@ -2289,7 +2270,7 @@ export default function App() {
             }
           }}
           onSelectCategory={setSelectedCategory}
-          onScanFile={handleScanFile}
+          onScanProcessed={handleScanProcessed}
           onScanText={handleScanText}
           onChangeOcrText={setOcrTextResult}
           onAddTodoDraft={addTodoDraft}
