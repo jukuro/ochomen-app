@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { FileText, Image as ImageIcon, Edit, Trash2, RefreshCw } from "lucide-react";
+import { FileText, Image as ImageIcon, Edit, Trash2, RefreshCw, X, ZoomIn } from "lucide-react";
 import type { Child, Entry } from "@/lib/types";
-import { formatRelativeDate } from "@/lib/dates";
+import { formatRelativeDate, formatShortDate } from "@/lib/dates";
 
 interface EntryCardProps {
   entry: Entry;
@@ -40,6 +40,7 @@ export function EntryCard({
   const [isEditing, setIsEditing] = useState(false);
   const [editCategory, setEditCategory] = useState(entry.category);
   const [editOcrText, setEditOcrText] = useState(entry.ocrText);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const [editDate, setEditDate] = useState(entry.date);
 
   return (
@@ -213,20 +214,22 @@ export function EntryCard({
                 )}
               </div>
             ) : entry.imageUrl ? (
-              <div className="rounded-lg overflow-hidden border border-slate-100 relative">
+              <div className="rounded-lg overflow-hidden border border-slate-100 relative group">
                 <Image
                   src={entry.imageUrl}
                   alt="スキャン画像"
                   width={720}
                   height={960}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleZoom(entry.id);
-                  }}
-                  className={`w-full h-auto cursor-zoom-in transition-transform ${
-                    isZoomed ? "scale-150 z-20 relative" : ""
-                  }`}
+                  onClick={(e) => { e.stopPropagation(); setLightboxOpen(true); }}
+                  className="w-full h-auto cursor-zoom-in"
                 />
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setLightboxOpen(true); }}
+                  className="absolute bottom-2 right-2 bg-black/50 text-white rounded-lg px-2 py-1 text-[10px] font-bold flex items-center gap-1"
+                >
+                  <ZoomIn size={11} /> 全画面
+                </button>
               </div>
             ) : (
               <p className="text-sm text-slate-400 text-center py-6">画像はありません</p>
@@ -235,13 +238,13 @@ export function EntryCard({
         </>
       )}
 
-      {entry.todos?.map((todo) => (
+      {entry.todos?.filter((t) => t.task?.trim()).map((todo) => (
         <div
           key={todo.id}
           id={`todo-entry-${todo.id}`}
           className={`p-3 rounded-xl border flex items-start gap-3 transition-all duration-300 ${
             todo.isCompleted
-              ? "bg-slate-50 border-slate-200 text-slate-400 line-through"
+              ? "bg-slate-50 border-slate-200"
               : highlightTodoId === todo.id
                 ? "bg-yellow-50 border-yellow-400 ring-2 ring-yellow-300 shadow-md"
                 : "bg-amber-50/50 border-amber-100"
@@ -251,19 +254,59 @@ export function EntryCard({
             type="checkbox"
             checked={todo.isCompleted}
             onChange={() => onToggleTodoComplete(todo.id)}
-            className="accent-teal-600 mt-0.5 w-5 h-5"
+            className="accent-teal-600 mt-0.5 w-5 h-5 flex-shrink-0"
           />
-          <div className="text-sm leading-snug flex-1">
-            <span className="font-bold text-xs text-amber-800">
-              やること（担当: {todo.assignedTo}）
-            </span>
-            <p className="mt-0.5">{todo.task}</p>
-            <span className="text-xs text-slate-400 mt-1 block">
-              {formatRelativeDate(todo.dueDate)}
-            </span>
+          <div className="text-sm leading-snug flex-1 min-w-0">
+            <p className={`font-bold text-slate-800 leading-tight ${todo.isCompleted ? "line-through text-slate-400" : ""}`}>
+              {todo.task}
+            </p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                {todo.type === "shopping" ? "🛒 買い物" : "📄 やること"}
+              </span>
+              <span className="text-[10px] text-slate-400">担当: {todo.assignedTo}</span>
+              {todo.dueDate && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                  todo.isCompleted ? "text-slate-400 bg-slate-100" : "text-teal-700 bg-teal-50"
+                }`}>
+                  {formatShortDate(todo.dueDate)} ({formatRelativeDate(todo.dueDate)})
+                </span>
+              )}
+            </div>
           </div>
         </div>
       ))}
+
+      {/* ライトボックス */}
+      {lightboxOpen && entry.imageUrl && (
+        <div
+          className="absolute inset-0 bg-black z-50 flex flex-col"
+          onClick={() => setLightboxOpen(false)}
+        >
+          <div className="flex justify-between items-center p-3 bg-black/80">
+            <span className="text-white text-xs font-bold">{entry.category} — {entry.date}</span>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setLightboxOpen(false); }}
+              className="text-white p-1.5 bg-white/20 rounded-full"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div
+            className="flex-1 overflow-auto flex items-start justify-center p-2"
+            onClick={(e) => e.stopPropagation()}
+            style={{ touchAction: "pinch-zoom" }}
+          >
+            <img
+              src={entry.imageUrl}
+              alt="スキャン画像（全画面）"
+              style={{ minWidth: "150%", height: "auto", maxWidth: "none" }}
+            />
+          </div>
+          <p className="text-white/50 text-[10px] text-center py-2">ピンチで拡大縮小・タップ外で閉じる</p>
+        </div>
+      )}
 
       {/* 書類一括削除エリア */}
       <div className="border-t border-slate-100 pt-3 flex gap-2" onClick={(e) => e.stopPropagation()}>

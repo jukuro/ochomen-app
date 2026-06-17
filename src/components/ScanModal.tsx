@@ -543,6 +543,14 @@ export function ScanModal({
                               <Trash2 size={14} />
                             </button>
                           </div>
+                          {/* タスク名（最初に大きく表示） */}
+                          <input
+                            type="text"
+                            value={draft.task}
+                            onChange={(event) => onUpdateTodoDraft(draft.id, { task: event.target.value })}
+                            placeholder={draft.type === "shopping" ? "買うものの名前" : "やることの内容"}
+                            className="w-full border border-slate-200 rounded-lg p-2.5 text-sm font-bold text-slate-800 bg-white"
+                          />
                           <div className="flex gap-2 text-xs">
                             <button
                               type="button"
@@ -567,40 +575,49 @@ export function ScanModal({
                               🛒 買うもの
                             </button>
                           </div>
-                          <input
-                            type="text"
-                            value={draft.task}
-                            onChange={(event) => onUpdateTodoDraft(draft.id, { task: event.target.value })}
-                            placeholder={draft.type === "shopping" ? "買うものの名前" : "やることの内容"}
-                            className="w-full border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 bg-white"
-                          />
-                          <div className="flex gap-1.5 flex-wrap">
-                            <input
-                              type="date"
-                              value={draft.dueDate}
-                              onChange={(event) => onUpdateTodoDraft(draft.id, { dueDate: event.target.value })}
-                              className="flex-1 min-w-[90px] border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white"
-                            />
-                            <select
-                              value={draft.assignedTo}
-                              onChange={(event) => onUpdateTodoDraft(draft.id, { assignedTo: event.target.value as TodoAssignee })}
-                              className="border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white"
-                            >
-                              <option value="共通">共通</option>
-                              {members.map((m) => (
-                                <option key={m.id} value={m.name}>{m.role} {m.name}</option>
-                              ))}
-                            </select>
-                            <select
-                              value={draft.reminderAt || "1day"}
-                              onChange={(event) => onUpdateTodoDraft(draft.id, { reminderAt: event.target.value as "none" | "today" | "1day" | "3day" })}
-                              className="border border-slate-200 rounded-lg p-2 text-xs text-slate-800 bg-white flex-1 min-w-[80px]"
-                            >
-                              <option value="none">🔔 なし</option>
-                              <option value="today">🔔 当日</option>
-                              <option value="1day">🔔 1日前</option>
-                              <option value="3day">🔔 3日前</option>
-                            </select>
+                          {/* 日付・担当・アラーム */}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <label className="text-[10px] font-bold text-slate-400 w-10 flex-shrink-0">📅 期限</label>
+                              <input
+                                type="date"
+                                value={draft.dueDate}
+                                onChange={(event) => onUpdateTodoDraft(draft.id, { dueDate: event.target.value })}
+                                className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-800 bg-white"
+                              />
+                              {draft.dueDate && (
+                                <span className="text-[10px] text-teal-600 font-bold flex-shrink-0">
+                                  {(() => {
+                                    const m = Number(draft.dueDate.slice(5,7));
+                                    const d = Number(draft.dueDate.slice(8,10));
+                                    return `${m}月${d}日`;
+                                  })()}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <label className="text-[10px] font-bold text-slate-400 w-10 flex-shrink-0">👤 担当</label>
+                              <select
+                                value={draft.assignedTo}
+                                onChange={(event) => onUpdateTodoDraft(draft.id, { assignedTo: event.target.value as TodoAssignee })}
+                                className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-800 bg-white"
+                              >
+                                <option value="共通">共通</option>
+                                {members.map((m) => (
+                                  <option key={m.id} value={m.name}>{m.role} {m.name}</option>
+                                ))}
+                              </select>
+                              <select
+                                value={draft.reminderAt || "none"}
+                                onChange={(event) => onUpdateTodoDraft(draft.id, { reminderAt: event.target.value as "none" | "today" | "1day" | "3day" })}
+                                className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-800 bg-white"
+                              >
+                                <option value="none">🔔 なし</option>
+                                <option value="today">🔔 当日</option>
+                                <option value="1day">🔔 1日前</option>
+                                <option value="3day">🔔 3日前</option>
+                              </select>
+                            </div>
                           </div>
                         </div>
                       );

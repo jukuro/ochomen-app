@@ -116,28 +116,39 @@ function buildImagePrompt(categoryName: string): string {
 `.trim();
 }
 
+function autoReminderAt(dueDate: string): "none" | "today" | "1day" | "3day" {
+  if (!dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return "none";
+  const diff = Math.round(
+    (new Date(dueDate).getTime() - new Date(TODAY).getTime()) / 86400000
+  );
+  if (diff < 0) return "none";    // 期限超過 → アラーム不要
+  if (diff === 0) return "today"; // 今日
+  if (diff <= 2) return "1day";   // 明後日まで → 1日前
+  if (diff <= 7) return "3day";   // 1週間以内 → 3日前
+  return "3day";                  // それ以降
+}
+
 function validateAndMapDrafts(
   raw: Array<Record<string, unknown>>
 ): OcrAnalysisResultBackend["todoDrafts"] {
   return raw
     .filter((d) => d && typeof d.task === "string" && (d.task as string).trim())
-    .map((d) => ({
-      task: (d.task as string).trim(),
-      dueDate: typeof d.dueDate === "string" ? d.dueDate : "",
-      assignedTo:
-        d.assignedTo === "ママ" || d.assignedTo === "パパ"
-          ? (d.assignedTo as string)
-          : "共通",
-      type: d.type === "shopping" ? ("shopping" as const) : ("todo" as const),
-      reminderAt:
-        d.reminderAt === "none" ||
-        d.reminderAt === "today" ||
-        d.reminderAt === "1day" ||
-        d.reminderAt === "3day"
-          ? (d.reminderAt as "none" | "today" | "1day" | "3day")
-          : "none",
-      confidence: typeof d.confidence === "number" ? Math.min(1, Math.max(0, d.confidence)) : 0.8,
-    }));
+    .map((d) => {
+      const rawDate = typeof d.dueDate === "string" ? d.dueDate : "";
+      // YYYY-MM-DD 形式のみ受け入れる（不完全な日付を除外）
+      const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : "";
+      return {
+        task: (d.task as string).trim(),
+        dueDate,
+        assignedTo:
+          d.assignedTo === "ママ" || d.assignedTo === "パパ"
+            ? (d.assignedTo as string)
+            : "共通",
+        type: d.type === "shopping" ? ("shopping" as const) : ("todo" as const),
+        reminderAt: autoReminderAt(dueDate),
+        confidence: typeof d.confidence === "number" ? Math.min(1, Math.max(0, d.confidence)) : 0.8,
+      };
+    });
 }
 
 /**
