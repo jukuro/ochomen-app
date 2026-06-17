@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { FileText, Image as ImageIcon, Edit, Trash2 } from "lucide-react";
+import { FileText, Image as ImageIcon, Edit, Trash2, RefreshCw } from "lucide-react";
 import type { Child, Entry } from "@/lib/types";
 import { formatRelativeDate } from "@/lib/dates";
 
@@ -19,6 +19,7 @@ interface EntryCardProps {
   onToggleTodoComplete: (todoId: string) => void;
   onUpdateEntry: (entryId: string, updatedFields: Partial<Entry>) => void;
   onDeleteEntry: (entryId: string) => void;
+  onRescan?: () => void;
 }
 
 export function EntryCard({
@@ -34,6 +35,7 @@ export function EntryCard({
   onToggleTodoComplete,
   onUpdateEntry,
   onDeleteEntry,
+  onRescan,
 }: EntryCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editCategory, setEditCategory] = useState(entry.category);
@@ -262,6 +264,36 @@ export function EntryCard({
           </div>
         </div>
       ))}
+
+      {/* 書類一括削除エリア */}
+      <div className="border-t border-slate-100 pt-3 flex gap-2" onClick={(e) => e.stopPropagation()}>
+        {onRescan && (
+          <button
+            type="button"
+            onClick={onRescan}
+            className="flex-1 py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-teal-100 transition"
+          >
+            <RefreshCw size={12} />
+            再スキャン
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            const todoCount = entry.todos?.length || 0;
+            const msg = todoCount > 0
+              ? `「${entry.category}」（${entry.date}）とやること ${todoCount} 件をすべて削除しますか？\n\nこの操作は元に戻せません。`
+              : `「${entry.category}」（${entry.date}）を削除しますか？`;
+            if (confirm(msg)) {
+              onDeleteEntry(entry.id);
+            }
+          }}
+          className="flex-1 py-2 rounded-xl border border-red-100 bg-red-50 text-red-600 text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-red-100 transition"
+        >
+          <Trash2 size={12} />
+          この書類とやることを削除
+        </button>
+      </div>
     </div>
   );
 }

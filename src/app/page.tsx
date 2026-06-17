@@ -975,6 +975,7 @@ export default function App() {
           onToggleTodoComplete={toggleTodoComplete}
           onUpdateEntry={handleUpdateEntry}
           onDeleteEntry={handleDeleteEntry}
+          onRescan={() => setIsScanModalOpen(true)}
         />
       </div>
     );
