@@ -4,10 +4,17 @@ const apiKey = process.env.GEMINI_API_KEY || "";
 
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
+export interface OcrSection {
+  author: "teacher" | "parent";
+  date?: string;
+  text: string;
+}
+
 export interface OcrAnalysisResultBackend {
   text: string;
   suggestedTitle?: string;
   suggestedCategory?: string;
+  sections?: OcrSection[];
   todoDrafts: Array<{
     task: string;
     dueDate: string;
@@ -67,27 +74,54 @@ const TODO_DRAFT_SCHEMA = {
   },
 };
 
+const SECTIONS_SCHEMA = {
+  type: "ARRAY",
+  description:
+    "お帳面・連絡帳など、先生と保護者が交互に書く文書の場合にのみ設定。各セクションを著者別に分割する。通常のプリント（園だより・給食だよりなど）では空配列にすること。",
+  items: {
+    type: "OBJECT",
+    properties: {
+      author: {
+        type: "STRING",
+        description:
+          "'teacher'（保育士・先生が書いた部分）または 'parent'（保護者・家庭が書いた部分）。",
+      },
+      date: {
+        type: "STRING",
+        description:
+          "このセクションの日付。YYYY-MM-DD形式。1ページに複数日ある場合に有用。不明な場合は空文字。",
+      },
+      text: {
+        type: "STRING",
+        description: "そのセクションのテキスト全文。Markdown整形済みにすること。",
+      },
+    },
+    required: ["author", "text"],
+  },
+};
+
 const RESPONSE_SCHEMA = {
   type: "OBJECT",
   properties: {
     structuredText: {
       type: "STRING",
       description:
-        "スマートフォンの画面でも見やすくなるよう整形した日本語のMarkdownテキスト。",
+        "スマートフォンの画面でも見やすくなるよう整形した日本語のMarkdownテキスト。お帳面の場合は先生と保護者のテキストをまとめて1つの文章として整形したもの。",
     },
     suggestedTitle: {
       type: "STRING",
       description:
-        "この書類を一言で表すタイトル（例：「6月度行事予定」「歯科検診のお知らせ」「7月献立表」）。20文字以内。",
+        "この書類を一言で表すタイトル（例：「6月度行事予定」「歯科検診のお知らせ」「7月献立表」「4/1 連絡帳」）。20文字以内。",
     },
     suggestedCategory: {
       type: "STRING",
       description:
         "書類の内容に最も合うカテゴリー名。提供されたカテゴリーリストから選ぶか、合うものがなければ適切な名称を提案する。",
     },
+    sections: SECTIONS_SCHEMA,
     todoDrafts: TODO_DRAFT_SCHEMA,
   },
-  required: ["structuredText", "suggestedTitle", "suggestedCategory", "todoDrafts"],
+  required: ["structuredText", "suggestedTitle", "suggestedCategory", "sections", "todoDrafts"],
 };
 
 function buildTextPrompt(rawOcrText: string, categoryName: string): string {
@@ -142,6 +176,14 @@ function buildImagePrompt(categoryName: string, categoriesList?: string[]): stri
 - 給食だより・献立表のメニュー（料理名・食材名。例：「みかん缶、牛乳、サラダうどん」など）は、やること・予定のどちらにも抽出しないでください。これらは保護者の行動を伴わない情報であり、todoDraftsは空にしてください。
 - 単なる連絡事項・お知らせ・報告（行動が不要なもの）も抽出しないでください。
 - 抽出するのは「保護者が何か行動する必要があるもの（提出・申込・支払い・準備・購入）」と「カレンダーに入れる価値のある行事・イベント（event）」だけです。迷ったら抽出しない方を選んでください。
+
+【お帳面・連絡帳の判別と分離（重要）】
+- ページが「保育士/先生と保護者が交互に書くお帳面・連絡帳・交換日記形式」の場合は、sectionsに必ず各ブロックを分けて出力してください。
+- 判別のヒント：日付ごとに2つの段落がある／筆跡が明らかに2種類ある／「よろしくお願いします」「ありがとうございます」など挨拶で区切られている／ページの上下で書き手が変わっている。
+- 先生（保育士）が書いた部分 → author: "teacher"
+- 保護者（家庭）が書いた部分 → author: "parent"
+- 通常の園だより・給食だより・行事案内プリントなどは、sectionsを空配列（[]）にしてください。
+- 判断が難しい場合は、ページ内で最初に登場するブロック（日付の直後など）を "teacher" と推定してください。
 
 ${categoryHint}【カテゴリー参考】${categoryName}
 `.trim();
@@ -286,6 +328,7 @@ export async function analyzeImageOcr(
       structuredText?: string;
       suggestedTitle?: string;
       suggestedCategory?: string;
+      sections?: Array<Record<string, unknown>>;
       todoDrafts?: Array<Record<string, unknown>>;
     };
 
@@ -300,10 +343,21 @@ export async function analyzeImageOcr(
     // AIがタイトルを返さない場合は本文先頭から自動生成
     const suggestedTitle = (parsed.suggestedTitle || "").trim() || deriveTitleFromText(structuredText);
 
+    // sections の正規化
+    const rawSections = Array.isArray(parsed.sections) ? parsed.sections : [];
+    const sections: OcrSection[] = rawSections
+      .filter((s) => s && (s.author === "teacher" || s.author === "parent") && typeof s.text === "string" && (s.text as string).trim())
+      .map((s) => ({
+        author: s.author as "teacher" | "parent",
+        date: typeof s.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.date) ? s.date : undefined,
+        text: (s.text as string).replace(/\\n/g, "\n").trim(),
+      }));
+
     return {
       text: structuredText,
       suggestedTitle,
       suggestedCategory: suggestedCategory || categoryName,
+      sections: sections.length > 0 ? sections : undefined,
       todoDrafts: validateAndMapDrafts(parsed.todoDrafts || []),
     };
   } catch (error) {

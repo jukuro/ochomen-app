@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import Image from "next/image";
 import { FileText, Image as ImageIcon, Edit, Trash2, RefreshCw, X, ZoomIn, ChevronDown, ChevronUp, CalendarDays, ShoppingBag, ClipboardList, Bell, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
-import type { Child, Entry } from "@/lib/types";
+import type { Child, Entry, EntrySection } from "@/lib/types";
 import { formatRelativeDate, formatShortDate } from "@/lib/dates";
 import { ConfirmModal } from "./ConfirmModal";
 
@@ -239,6 +239,49 @@ interface EntryCardProps {
   onUpdateEntry: (entryId: string, updatedFields: Partial<Entry>) => void;
   onDeleteEntry: (entryId: string) => void;
   onRescan?: () => void;
+}
+
+// ---- お帳面セクション表示 ----------------------------------------
+function EntrySectionsView({
+  sections,
+  highlightQuery = "",
+  compact = false,
+}: {
+  sections: EntrySection[];
+  highlightQuery?: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      {sections.map((sec, i) => {
+        const isTeacher = sec.author === "teacher";
+        return (
+          <div
+            key={i}
+            className={`rounded-xl border-l-4 px-3 py-2.5 ${
+              isTeacher
+                ? "border-emerald-400 bg-emerald-50/70"
+                : "border-amber-400 bg-amber-50/70"
+            }`}
+          >
+            <div className={`text-[11px] font-bold mb-1.5 flex items-center gap-1 ${isTeacher ? "text-emerald-700" : "text-amber-700"}`}>
+              {isTeacher ? "👩‍🏫 先生から" : "🏠 家庭から"}
+              {sec.date && (
+                <span className="font-normal opacity-70 ml-1">
+                  {sec.date.slice(5).replace("-", "/")}
+                </span>
+              )}
+            </div>
+            <div className={`text-slate-700 leading-relaxed whitespace-pre-wrap ${compact ? "line-clamp-4 text-xs" : "text-sm"}`}>
+              {highlightQuery
+                ? applyHighlight(sec.text, highlightQuery)
+                : sec.text}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function EntryCard({
@@ -625,7 +668,10 @@ export function EntryCard({
                 onClick={(e) => { e.stopPropagation(); setOcrFullscreen(true); }}
                 title="タップで全画面表示"
               >
-                {renderMarkdown(entry.ocrText, highlightQuery)}
+                {entry.sections && entry.sections.length > 0
+                  ? <EntrySectionsView sections={entry.sections} highlightQuery={highlightQuery} compact />
+                  : renderMarkdown(entry.ocrText, highlightQuery)
+                }
                 <p className="text-[10px] text-slate-400 text-right pt-1">↗ タップで全画面</p>
               </div>
             ) : entry.imageUrl ? (
@@ -791,7 +837,10 @@ export function EntryCard({
             )}
             <div className="flex-1 overflow-y-auto p-5">
               <div className="text-sm space-y-3 leading-relaxed">
-                {renderMarkdown(entry.ocrText, highlightQuery, `fs-${entry.id}`, fsCounter)}
+                {entry.sections && entry.sections.length > 0
+                  ? <EntrySectionsView sections={entry.sections} highlightQuery={highlightQuery} />
+                  : renderMarkdown(entry.ocrText, highlightQuery, `fs-${entry.id}`, fsCounter)
+                }
               </div>
             </div>
           </div>

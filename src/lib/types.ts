@@ -48,6 +48,14 @@ export interface OcrAnalysisResult {
   todoDrafts: TodoDraft[];
 }
 
+/** お帳面・連絡帳の1セクション（先生 or 保護者の1ブロック分） */
+export interface EntrySection {
+  author: "teacher" | "parent";
+  /** YYYY-MM-DD。複数日ある場合の日付ラベル */
+  date?: string;
+  text: string;
+}
+
 export interface Entry {
   id: string;
   childIds: string[];
@@ -58,6 +66,8 @@ export interface Entry {
   todos?: Todo[];
   isRead?: boolean;
   title?: string;
+  /** お帳面・連絡帳モード：先生と保護者のセクション分離結果 */
+  sections?: EntrySection[];
 }
 
 export interface Child {
@@ -87,4 +97,6 @@ export interface CaptureDoc {
   category?: string;
   ocrText?: string;
   todoDrafts?: TodoDraft[];
+  /** お帳面・連絡帳の場合：先生と保護者のセクション */
+  sections?: EntrySection[];
 }

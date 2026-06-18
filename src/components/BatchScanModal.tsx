@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Camera, Loader2, Sparkles, Trash2, X, CheckCircle2, AlertCircle, Clock, Plus, RotateCw } from "lucide-react";
-import type { Child, CaptureDoc, CapturePage } from "@/lib/types";
+import type { Child, CaptureDoc, CapturePage, EntrySection } from "@/lib/types";
 import { compressAndRotate } from "@/lib/imageCompress";
 import { createLocalId } from "@/lib/ids";
 
@@ -20,7 +20,7 @@ interface BatchScanModalProps {
   onRemoveDoc: (docId: string) => void;
   onRemovePageFromDoc: (docId: string, pageId: string) => void;
   onRotatePage: (docId: string, pageId: string) => void;
-  onUpdateDocMeta: (docId: string, changes: Partial<Pick<CaptureDoc, "title" | "category">>) => void;
+  onUpdateDocMeta: (docId: string, changes: Partial<Pick<CaptureDoc, "title" | "category" | "sections">>) => void;
   onClose: () => void;
   onProcess: (autoCommit: boolean) => void;
   onCommitConfirmed: () => void;
@@ -254,6 +254,39 @@ export function BatchScanModal({
                         <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
+
+                    {/* お帳面セクション確認・修正 UI */}
+                    {doc.sections && doc.sections.length > 0 && (
+                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 space-y-2">
+                        <p className="text-[11px] font-bold text-indigo-700 flex items-center gap-1">
+                          📖 お帳面モード — 先生と保護者の区別を確認
+                        </p>
+                        {doc.sections.map((sec, si) => (
+                          <div key={si} className={`rounded-lg p-2.5 border text-xs space-y-1 ${sec.author === "teacher" ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`font-bold ${sec.author === "teacher" ? "text-emerald-700" : "text-amber-700"}`}>
+                                {sec.author === "teacher" ? "👩‍🏫 先生から" : "🏠 家庭から"}
+                                {sec.date && <span className="font-normal ml-1 opacity-70">（{sec.date.slice(5).replace("-", "/")}）</span>}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated: EntrySection[] = doc.sections!.map((s, i) =>
+                                    i === si ? { ...s, author: s.author === "teacher" ? "parent" : "teacher" } : s
+                                  );
+                                  onUpdateDocMeta(doc.id, { sections: updated });
+                                }}
+                                className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${sec.author === "teacher" ? "border-emerald-300 text-emerald-700 hover:bg-emerald-100" : "border-amber-300 text-amber-700 hover:bg-amber-100"}`}
+                              >
+                                入れ替え
+                              </button>
+                            </div>
+                            <p className="text-slate-600 leading-relaxed line-clamp-3">{sec.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {doc.todoDrafts && doc.todoDrafts.filter((d) => d.task.trim()).length > 0 && (
                       <p className="text-[11px] text-teal-700 font-bold">
                         やること {doc.todoDrafts.filter((d) => d.task.trim()).length}件も登録されます

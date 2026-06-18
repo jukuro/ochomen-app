@@ -52,6 +52,7 @@ export async function POST(request: Request) {
       todoDrafts: result.todoDrafts,
       suggestedTitle: result.suggestedTitle,
       suggestedCategory: result.suggestedCategory,
+      sections: result.sections,
     });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);

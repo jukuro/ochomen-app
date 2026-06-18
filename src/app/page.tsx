@@ -682,7 +682,7 @@ export default function App() {
     );
   };
 
-  const handleUpdateDocMeta = (docId: string, changes: Partial<Pick<CaptureDoc, "title" | "category">>) => {
+  const handleUpdateDocMeta = (docId: string, changes: Partial<Pick<CaptureDoc, "title" | "category" | "sections">>) => {
     setCaptureDocs((prev) => prev.map((d) => (d.id === docId ? { ...d, ...changes } : d)));
   };
 
@@ -726,6 +726,7 @@ export default function App() {
       text?: string;
       suggestedTitle?: string;
       suggestedCategory?: string;
+      sections?: Array<{ author: "teacher" | "parent"; date?: string; text: string }>;
       todoDrafts?: Array<{
         task: string; dueDate: string; assignedTo: string;
         type: "todo" | "shopping" | "event"; reminderAt: "none" | "today" | "1day" | "3day";
@@ -760,6 +761,7 @@ export default function App() {
       todos: generatedTodos.length > 0 ? generatedTodos : undefined,
       isRead: false,
       title: title || undefined,
+      sections: doc.sections,
     };
     setEntries((prev) => [newEntry, ...prev]);
   };
@@ -800,10 +802,11 @@ export default function App() {
         const title = (data.suggestedTitle || "").trim();
         const ocrText = data.text || "";
         const drafts: TodoDraft[] = (data.todoDrafts || []).map((d) => ({ id: createLocalId("draft"), ...d }));
+        const sections = data.sections && data.sections.length > 0 ? data.sections : undefined;
 
         setCaptureDocs((prev) =>
           prev.map((d) =>
-            d.id === doc.id ? { ...d, status: "done", title: title || cat, category: cat, ocrText, todoDrafts: drafts } : d
+            d.id === doc.id ? { ...d, status: "done", title: title || cat, category: cat, ocrText, todoDrafts: drafts, sections } : d
           )
         );
 
