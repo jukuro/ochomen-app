@@ -24,7 +24,14 @@ import {
 } from "lucide-react";
 import type { Todo, Entry, Child, Screen, TodoDraft, Member, Diary, CaptureDoc, CapturePage } from "@/lib/types";
 import { APP_TODAY, isOverdue, isToday, isTomorrow } from "@/lib/dates";
-import { localAppStateStore, type AppState } from "@/lib/appState";
+import {
+  localAppStateStore,
+  incrementScanUsage,
+  remainingScanCount,
+  FREE_MONTHLY_SCAN_LIMIT,
+  type AppState,
+  type ScanUsage,
+} from "@/lib/appState";
 import { DEMO_CHILDREN, DEMO_ENTRIES } from "@/lib/demoData";
 import { createLocalId } from "@/lib/ids";
 import { STANDARD_CATEGORIES } from "@/lib/categories";
@@ -161,6 +168,8 @@ export default function App() {
   const [currentPlan, setCurrentPlan] = useState<PlanId>("free");
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [premiumTrigger, setPremiumTrigger] = useState<string | undefined>(undefined);
+  const [scanUsage, setScanUsage] = useState<ScanUsage | undefined>(undefined);
+  const [stripeCustomerId, setStripeCustomerId] = useState<string | undefined>(undefined);
 
   const persistState = useCallback(
     (overrides?: Partial<AppState>) => {
@@ -170,6 +179,9 @@ export default function App() {
         kindergartenName,
         categories,
         entries,
+        scanUsage,
+        plan: currentPlan,
+        stripeCustomerId,
         ...overrides,
       };
       localAppStateStore.save(state);
@@ -178,7 +190,7 @@ export default function App() {
         pushToSupabase(state).catch(() => {/* ネットワーク不在時は握り潰す */});
       }
     },
-    [children, kindergartenName, categories, entries]
+    [children, kindergartenName, categories, entries, scanUsage, currentPlan, stripeCustomerId]
   );
 
   // 初回ロード: localStorage → state、その後 Supabase からの pull を試みる
@@ -199,10 +211,32 @@ export default function App() {
             setSelectedChildIds(localState.children.map((c) => c.id));
             setTargetChildIds(localState.children.map((c) => c.id));
             setShowOnboarding(false);
+            if (localState.scanUsage) setScanUsage(localState.scanUsage);
+            if (localState.plan) setCurrentPlan(localState.plan);
+            if (localState.stripeCustomerId) setStripeCustomerId(localState.stripeCustomerId);
           });
         }
       } catch {
         /* ignore corrupt storage */
+      }
+
+      // Stripe 決済完了リダイレクト検出（?upgraded=true）
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("upgraded") === "true") {
+          const sessionId = params.get("session_id") ?? undefined;
+          setCurrentPlan("premium");
+          if (sessionId) {
+            // Stripe Customer ID を後で取得するため session_id を保持
+            // ここでは簡易的に sessionId をキーとして使う
+          }
+          showToast("🎉 プレミアムプランが有効になりました！");
+          // URL のクエリパラメータをクリーンアップ
+          window.history.replaceState({}, "", window.location.pathname);
+        } else if (params.get("upgrade_canceled") === "true") {
+          showToast("アップグレードをキャンセルしました");
+          window.history.replaceState({}, "", window.location.pathname);
+        }
       }
 
       // 2) Supabase からの pull（設定済みかつ認証済みの場合のみ）
@@ -272,6 +306,13 @@ export default function App() {
     if (!hydrated || showOnboarding) return;
     persistState();
   }, [hydrated, showOnboarding, persistState]);
+
+  // プラン変更時も即座に保存
+  useEffect(() => {
+    if (!hydrated) return;
+    persistState();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPlan, scanUsage, stripeCustomerId]);
 
   // アラームリマインダー通知のシミュレーション
   useEffect(() => {
@@ -461,11 +502,13 @@ export default function App() {
     showToast(`${name}さんを家族メンバーに追加しました`);
   };
 
+  const appInternalKey = process.env.NEXT_PUBLIC_APP_KEY ?? "";
+
   /** ScanModal 側で圧縮・回転済みの base64 を受け取ってAPIに投げる */
   const runScanApi = async (base64: string, mimeType: string) => {
     const response = await fetch("/api/scan-image", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(appInternalKey ? { "x-app-key": appInternalKey } : {}) },
       // すぐ登録のカテゴリー提案は定番リストから選ばせる（乱立防止）
       body: JSON.stringify({ base64, mimeType, categoryName: selectedCategory, categories: STANDARD_CATEGORIES }),
     });
@@ -713,7 +756,7 @@ export default function App() {
   const scanDoc = async (doc: CaptureDoc) => {
     const response = await fetch("/api/scan-image", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(appInternalKey ? { "x-app-key": appInternalKey } : {}) },
       body: JSON.stringify({
         images: doc.pages.map((p) => ({ base64: p.base64, mimeType: p.mimeType })),
         categoryName: "未分類",
@@ -769,11 +812,28 @@ export default function App() {
   /** 解析を実行。autoCommit=true なら解析しながら自動登録、false なら確認モード（解析のみ） */
   const handleProcessDocs = async (autoCommit: boolean) => {
     if (batchProcessing) return;
+
+    // スキャン枚数制限チェック（無料プランのみ）
+    const pending0 = captureDocs.filter((d) => d.status === "pending" || d.status === "error");
+    if (currentPlan !== "premium") {
+      const remaining = remainingScanCount(scanUsage, "free");
+      if (remaining <= 0) {
+        setPremiumTrigger(`スキャン（月${FREE_MONTHLY_SCAN_LIMIT}枚の無料枠を超過）`);
+        setShowPremiumModal(true);
+        return;
+      }
+      if (pending0.length > remaining) {
+        showToast(`今月の残りスキャン枚数は${remaining}枚です。${remaining}枚まで処理します`);
+      }
+    }
+
     setBatchProcessing(true);
     setBatchConfirmMode(!autoCommit);
     const childIds = [...targetChildIds];
     // error 状態の書類も再試行対象に含める
-    const pending = captureDocs.filter((d) => d.status === "pending" || d.status === "error");
+    const pending = currentPlan === "premium"
+      ? pending0
+      : pending0.slice(0, remainingScanCount(scanUsage, "free"));
     let doneCount = 0;
     const failedDocIds: string[] = [];
 
@@ -788,7 +848,15 @@ export default function App() {
         try {
           data = await scanDoc(doc);
         } catch (firstErr: any) {
-          const isRateLimit = firstErr?.status === 429 || firstErr?.errorCode === "RATE_LIMIT";
+          const errCode = firstErr?.errorCode as string | undefined;
+          if (errCode === "QUOTA_EXHAUSTED") {
+            // 月次クォータ枯渇：リトライ不可。即座にユーザーへ通知して全処理を中断
+            setBatchProcessing(false);
+            showToast("⚠️ Gemini APIの無料枠上限に達しました。翌週のリセットまでお待ちいただくか、APIキーを更新してください。");
+            setCaptureDocs((prev) => prev.map((d) => d.status === "processing" ? { ...d, status: "error" } : d));
+            return;
+          }
+          const isRateLimit = firstErr?.status === 429 || errCode === "RATE_LIMIT";
           if (isRateLimit) {
             showToast("AIが混み合っています。5秒後に自動リトライします...");
             await new Promise((r) => setTimeout(r, 5000));
@@ -814,6 +882,8 @@ export default function App() {
           createEntryFromDoc(doc, title, cat, ocrText, drafts, childIds);
         }
         doneCount += 1;
+        // スキャン使用量を更新（1枚ごとに加算）
+        setScanUsage((prev) => incrementScanUsage(prev));
         if (pending.length > 1) showToast(`解析中… ${doneCount}/${pending.length}件`);
       } catch (err) {
         console.error("doc scan error:", err);
@@ -2788,12 +2858,20 @@ export default function App() {
                 <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
                   <Camera size={24} className="text-white" />
                 </div>
-                <div className="text-left">
+                <div className="text-left flex-1">
                   <p className="text-base font-bold text-white flex items-center gap-1">
                     書類をスキャン <Sparkles size={13} className="text-teal-100" />
                   </p>
                   <p className="text-[11px] text-white/80 mt-0.5">何枚でも撮影OK・両面もまとめOK・AIが自動整理</p>
                 </div>
+                {currentPlan === "free" && (
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-[10px] text-white/70">今月の残り</p>
+                    <p className={`text-base font-bold ${remainingScanCount(scanUsage, "free") === 0 ? "text-red-300" : "text-white"}`}>
+                      {remainingScanCount(scanUsage, "free")}/{FREE_MONTHLY_SCAN_LIMIT}
+                    </p>
+                  </div>
+                )}
               </button>
 
               {/* その他の追加方法 */}
@@ -2991,12 +3069,13 @@ export default function App() {
           open={showPremiumModal}
           currentPlan={currentPlan}
           triggerFeature={premiumTrigger}
+          stripeCustomerId={stripeCustomerId}
           onClose={() => { setShowPremiumModal(false); setPremiumTrigger(undefined); }}
           onUpgrade={() => {
-            // 本番では課金フローへ遷移。ベータ中は即時アンロック
+            // Stripe 未設定の場合のフォールバック（開発環境 / ベータ）
             setCurrentPlan("premium");
             setShowPremiumModal(false);
-            showToast("プレミアムプランが有効になりました！（ベータ）");
+            showToast("🎉 プレミアムプランが有効になりました！");
           }}
         />
         {/* 音声AI日記追加モーダル */}

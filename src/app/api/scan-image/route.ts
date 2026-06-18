@@ -2,6 +2,16 @@ import { NextResponse } from "next/server";
 import { analyzeImageOcr } from "@/app/ocrStructurizer";
 
 export async function POST(request: Request) {
+  // 不正な直接呼び出しを防ぐ簡易ガード
+  // APP_INTERNAL_KEY が設定されている場合のみ検証（未設定なら通過）
+  const requiredKey = process.env.APP_INTERNAL_KEY;
+  if (requiredKey) {
+    const clientKey = request.headers.get("x-app-key");
+    if (clientKey !== requiredKey) {
+      return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
+    }
+  }
+
   try {
     const body = (await request.json()) as {
       base64?: unknown;
@@ -58,19 +68,29 @@ export async function POST(request: Request) {
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error("scan-image API error:", errMsg);
 
-    const isRateLimit = errMsg.includes("429") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("rate");
-    const isAuth = errMsg.includes("403") || errMsg.toLowerCase().includes("permission") || errMsg.toLowerCase().includes("api key");
+    const lower = errMsg.toLowerCase();
+    // 月次クォータ枯渇（retryしても解消しない）と一時的なレート制限を区別する
+    const isQuotaExhausted =
+      lower.includes("quota") ||
+      lower.includes("resource_exhausted") ||
+      lower.includes("billing") ||
+      lower.includes("plan") ||
+      lower.includes("upgrade");
+    const isRateLimit = !isQuotaExhausted && (errMsg.includes("429") || lower.includes("rate"));
+    const isAuth = errMsg.includes("403") || lower.includes("permission") || lower.includes("api key") || lower.includes("invalid");
 
     return NextResponse.json(
       {
-        error: isRateLimit
+        error: isQuotaExhausted
+          ? "QUOTA_EXHAUSTED"
+          : isRateLimit
           ? "RATE_LIMIT"
           : isAuth
           ? "AUTH_ERROR"
           : "OCR_FAILED",
         detail: errMsg,
       },
-      { status: isRateLimit ? 429 : 500 }
+      { status: isQuotaExhausted || isRateLimit ? 429 : 500 }
     );
   }
 }

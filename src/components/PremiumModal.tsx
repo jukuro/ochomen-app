@@ -1,6 +1,8 @@
 "use client";
 
-import { X, Sparkles, Check, Lock } from "lucide-react";
+import { useState } from "react";
+import { X, Sparkles, Check, Lock, Loader2 } from "lucide-react";
+import { FREE_MONTHLY_SCAN_LIMIT } from "@/lib/appState";
 
 export type PlanId = "free" | "premium";
 
@@ -27,11 +29,14 @@ interface PremiumModalProps {
   open: boolean;
   currentPlan: PlanId;
   triggerFeature?: string;
+  stripeCustomerId?: string;
   onClose: () => void;
+  /** Stripe Checkout 開始後に呼ばれる（Stripe 未設定時は即座に onUpgrade 扱い） */
   onUpgrade: () => void;
 }
 
 const PREMIUM_FEATURES = [
+  { icon: "📷", label: `スキャン　無制限`, free: `月${FREE_MONTHLY_SCAN_LIMIT}枚まで` },
   { icon: "📁", label: "書類保存　無制限", free: "10件まで" },
   { icon: "👨‍👩‍👧‍👦", label: "家族メンバー　5人まで", free: "1人まで" },
   { icon: "✨", label: "AI日記補完・感情タグ", free: "使用不可" },
@@ -43,12 +48,44 @@ export function PremiumModal({
   open,
   currentPlan,
   triggerFeature,
+  stripeCustomerId,
   onClose,
   onUpgrade,
 }: PremiumModalProps) {
+  const [isLoading, setIsLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+
   if (!open) return null;
 
   const isPremium = currentPlan === "premium";
+
+  const handleCheckout = async () => {
+    setCheckoutError(null);
+    setIsLoading(true);
+    try {
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId: stripeCustomerId }),
+      });
+      const data = await res.json() as { url?: string; error?: string };
+      if (!res.ok || !data.url) {
+        // Stripe 未設定の場合はフォールバック（onUpgrade を直接呼ぶ）
+        if (data.error?.includes("not configured")) {
+          onUpgrade();
+        } else {
+          setCheckoutError(data.error || "決済ページの準備に失敗しました");
+        }
+        setIsLoading(false);
+        return;
+      }
+      // Stripe Checkout ページへリダイレクト
+      window.location.href = data.url;
+    } catch {
+      setCheckoutError("ネットワークエラーが発生しました");
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-end bg-black/60" onClick={onClose}>
@@ -108,18 +145,27 @@ export function PremiumModal({
           </div>
         ) : (
           <div className="space-y-2">
+            {checkoutError && (
+              <p className="text-xs text-red-500 text-center px-2">{checkoutError}</p>
+            )}
             <button
               type="button"
-              onClick={onUpgrade}
-              className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg active:scale-95 transition"
+              onClick={handleCheckout}
+              disabled={isLoading}
+              className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg active:scale-95 transition disabled:opacity-60"
             >
-              <Sparkles size={16} />
-              プレミアムにアップグレード
+              {isLoading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Sparkles size={16} />
+              )}
+              {isLoading ? "決済ページを準備中…" : "プレミアムにアップグレード"}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="w-full py-3 rounded-2xl bg-slate-100 text-slate-500 text-sm font-bold"
+              disabled={isLoading}
+              className="w-full py-3 rounded-2xl bg-slate-100 text-slate-500 text-sm font-bold disabled:opacity-60"
             >
               無料プランで続ける
             </button>
@@ -127,7 +173,7 @@ export function PremiumModal({
         )}
 
         <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-          ※ 実装予定：App Store / Google Play にて購読。現在はベータ版のため無料でご利用いただけます。
+          クレジットカード決済（Stripe）。いつでも解約可能です。
         </p>
       </div>
     </div>
