@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import {
   AlertCircle,
   Camera,
@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import type { Child, TodoAssignee, TodoDraft, Member } from "@/lib/types";
+import { STANDARD_CATEGORIES } from "@/lib/categories";
 
 interface ScanModalProps {
   open: boolean;
@@ -45,6 +46,10 @@ interface ScanModalProps {
   onSubmit: () => void;
   scanErrorType?: string | null;
   onRetry?: () => void;
+  mode?: "quick" | "full";
+  suggestedTitle?: string;
+  suggestedCategory?: string;
+  onQuickSave?: (title: string, category: string) => void;
 }
 
 /** canvas で画像を回転・圧縮して base64 を返す */
@@ -117,6 +122,10 @@ export function ScanModal({
   onSubmit,
   scanErrorType,
   onRetry,
+  mode = "full",
+  suggestedTitle,
+  suggestedCategory,
+  onQuickSave,
 }: ScanModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -127,15 +136,57 @@ export function ScanModal({
   const [isCompressing, setIsCompressing] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [showOcrFullscreen, setShowOcrFullscreen] = useState(false);
+  const [customCategoryMode, setCustomCategoryMode] = useState(false);
+  const [customCategoryInput, setCustomCategoryInput] = useState("");
+
+  // クイックモード用ローカル状態
+  const [isQuickMode, setIsQuickMode] = useState(false);
+  const [quickTitle, setQuickTitle] = useState("");
+  const [quickCategory, setQuickCategory] = useState(categories[0] ?? "");
+  const [quickCustomCategoryMode, setQuickCustomCategoryMode] = useState(false);
+  const [quickCustomCategoryInput, setQuickCustomCategoryInput] = useState("");
+
+  // モーダルが開くたびに mode に合わせてリセット
+  useEffect(() => {
+    if (open) {
+      setIsQuickMode(mode === "quick");
+      setQuickTitle("");
+      setQuickCategory(categories[0] ?? "");
+      setQuickCustomCategoryMode(false);
+      setQuickCustomCategoryInput("");
+    }
+  }, [open, mode]); // categories は意図的に除外（開くたびの初期値だけ見る）
+
+  // AIの提案が届いたらクイックモード状態を更新
+  useEffect(() => {
+    if (suggestedTitle) setQuickTitle(suggestedTitle);
+  }, [suggestedTitle]);
+
+  useEffect(() => {
+    // AIの提案カテゴリーをそのまま採用（既存リストに無くても新規カテゴリーとして使う）
+    if (suggestedCategory) {
+      setQuickCategory(suggestedCategory);
+    }
+  }, [suggestedCategory]);
 
   if (!open) return null;
+
+  // クイック登録は定番カテゴリー（固定）から選ぶ。AI提案を先頭に並べる
+  const quickCategoryOptions = Array.from(
+    new Set([
+      ...(suggestedCategory ? [suggestedCategory] : []),
+      ...STANDARD_CATEGORIES,
+    ])
+  );
 
   const headerTitle =
     importMethod === "paste"
       ? "LINE・メール貼付"
       : importMethod === "pdf"
       ? "PDF・ファイル読込"
-      : "プリントスキャン";
+      : isQuickMode
+      ? "すぐ登録"
+      : "整理して登録";
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -224,21 +275,57 @@ export function ScanModal({
             </div>
           </div>
 
-          {/* カテゴリー */}
-          <div>
+          {/* カテゴリー（クイックモードでは非表示） */}
+          {!isQuickMode && <div>
             <label className="text-xs font-bold text-slate-400 block mb-1.5">カテゴリー</label>
-            <select
-              value={selectedCategory}
-              onChange={(event) => onSelectCategory(event.target.value)}
-              className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 outline-none focus:border-teal-500 bg-white"
-            >
-              {categories.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </select>
-          </div>
+            {customCategoryMode ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customCategoryInput}
+                  onChange={(e) => {
+                    setCustomCategoryInput(e.target.value);
+                    if (e.target.value.trim()) onSelectCategory(e.target.value.trim());
+                  }}
+                  placeholder="例：行事のお知らせ、保健だより..."
+                  autoFocus
+                  className="flex-1 border border-teal-400 rounded-xl p-3 text-sm text-slate-800 outline-none focus:border-teal-500 bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomCategoryMode(false);
+                    setCustomCategoryInput("");
+                    onSelectCategory(categories[0] ?? "お帳面");
+                  }}
+                  className="text-xs text-slate-400 px-3 py-2 border border-slate-200 rounded-xl bg-white"
+                >
+                  戻す
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <select
+                  value={selectedCategory}
+                  onChange={(event) => onSelectCategory(event.target.value)}
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-800 outline-none focus:border-teal-500 bg-white"
+                >
+                  {categories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setCustomCategoryMode(true)}
+                  className="text-xs text-teal-600 font-bold flex items-center gap-1 pl-1"
+                >
+                  ＋ リストにないカテゴリーを入力する
+                </button>
+              </div>
+            )}
+          </div>}
 
           {/* ── ファイル選択前のスキャンボタン ── */}
           {!pendingFile && !ocrTextResult && (
@@ -437,8 +524,118 @@ export function ScanModal({
             </div>
           )}
 
+          {/* ── クイック登録確認パネル ── */}
+          {isQuickMode && ocrTextResult && !isScanning && !scanErrorType && (
+            <div className="space-y-4">
+              <div className="bg-teal-50 border border-teal-200 rounded-2xl p-4 space-y-3">
+                <p className="text-xs font-bold text-teal-700 flex items-center gap-1.5">
+                  <Sparkles size={13} className="text-teal-500" />
+                  AIが書類を認識しました
+                </p>
+                <div>
+                  <label className="text-xs font-bold text-slate-400 block mb-1">書類タイトル</label>
+                  <input
+                    type="text"
+                    value={quickTitle}
+                    onChange={(e) => setQuickTitle(e.target.value)}
+                    placeholder="タイトルを入力..."
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm font-bold text-slate-800 bg-white outline-none focus:border-teal-400"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-400 block mb-1">カテゴリー</label>
+                  {quickCustomCategoryMode ? (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={quickCustomCategoryInput}
+                        onChange={(e) => {
+                          setQuickCustomCategoryInput(e.target.value);
+                          if (e.target.value.trim()) setQuickCategory(e.target.value.trim());
+                        }}
+                        placeholder="例：保護者会費、行事のお知らせ..."
+                        autoFocus
+                        className="flex-1 border border-teal-400 rounded-xl p-3 text-sm text-slate-800 bg-white outline-none focus:border-teal-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQuickCustomCategoryMode(false);
+                          setQuickCustomCategoryInput("");
+                          setQuickCategory(suggestedCategory || categories[0] || "");
+                        }}
+                        className="text-xs text-slate-400 px-3 py-2 border border-slate-200 rounded-xl bg-white"
+                      >
+                        戻す
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <select
+                        value={quickCategory}
+                        onChange={(e) => setQuickCategory(e.target.value)}
+                        className="w-full border border-teal-300 bg-teal-50/40 rounded-xl p-3 text-sm font-bold text-slate-800 outline-none focus:border-teal-400"
+                      >
+                        {quickCategoryOptions.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                            {suggestedCategory && c === suggestedCategory ? "（AIのおすすめ）" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {suggestedCategory && quickCategory === suggestedCategory && (
+                        <p className="text-[11px] text-teal-600 font-bold flex items-center gap-1 pl-1">
+                          <Sparkles size={10} /> AIがこのカテゴリーをおすすめしています
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { setQuickCustomCategoryMode(true); setQuickCustomCategoryInput(""); }}
+                        className="text-xs text-slate-400 font-bold flex items-center gap-1 pl-1"
+                      >
+                        ＋ 自分でカテゴリーを入力する
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {todoDrafts.filter((d) => d.task.trim()).length > 0 && (
+                  <div className="bg-white/70 border border-teal-100 rounded-xl p-2.5">
+                    <p className="text-[11px] font-bold text-teal-700 flex items-center gap-1 mb-1">
+                      <AlertCircle size={11} /> やること {todoDrafts.filter((d) => d.task.trim()).length}件も一緒に登録します
+                    </p>
+                    <ul className="text-[11px] text-slate-500 space-y-0.5 pl-1">
+                      {todoDrafts.filter((d) => d.task.trim()).slice(0, 3).map((d) => (
+                        <li key={d.id} className="truncate">
+                          ・{d.type === "shopping" ? "🛒" : "📄"} {d.task}
+                          {d.dueDate ? `（${Number(d.dueDate.slice(5, 7))}/${Number(d.dueDate.slice(8, 10))}）` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onQuickSave?.(quickTitle.trim() || "スキャン書類", quickCategory)}
+                className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold flex items-center justify-center gap-2 transition active:scale-95 shadow-sm"
+              >
+                <Sparkles size={16} />
+                今すぐ保存
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsQuickMode(false)}
+                className="w-full py-2 text-sm text-teal-600 font-bold"
+              >
+                詳しく確認・編集する →
+              </button>
+            </div>
+          )}
+
           {/* ── OCR結果・タスク候補 ── */}
-          {ocrTextResult && (
+          {ocrTextResult && !isQuickMode && (
             <>
               <div>
                 <label className="text-xs font-bold text-slate-400 flex items-center gap-1 mb-1.5">
@@ -629,23 +826,25 @@ export function ScanModal({
           )}
         </div>
 
-        <div className="flex gap-3 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-3 rounded-xl bg-slate-100 text-slate-500 text-sm font-bold"
-          >
-            キャンセル
-          </button>
-          <button
-            type="button"
-            onClick={onSubmit}
-            disabled={!ocrTextResult}
-            className="flex-1 py-3 rounded-xl bg-teal-600 text-white text-sm font-bold disabled:bg-slate-200 disabled:text-slate-400"
-          >
-            登録する
-          </button>
-        </div>
+        {(!isQuickMode || !ocrTextResult || isScanning || !!scanErrorType) && (
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-3 rounded-xl bg-slate-100 text-slate-500 text-sm font-bold"
+            >
+              キャンセル
+            </button>
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={!ocrTextResult}
+              className="flex-1 py-3 rounded-xl bg-teal-600 text-white text-sm font-bold disabled:bg-slate-200 disabled:text-slate-400"
+            >
+              登録する
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

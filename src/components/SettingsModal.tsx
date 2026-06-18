@@ -1,11 +1,20 @@
 "use client";
 
-import { CreditCard, Edit2, Trash2, X } from "lucide-react";
-import type { Child, Plan, Member } from "@/lib/types";
+import { useState, useEffect } from "react";
+import { Edit2, Trash2, X, Cloud, CloudOff, LogIn, LogOut, UserPlus, Loader2 } from "lucide-react";
+import type { Child, Member } from "@/lib/types";
+import { AVATAR_EMOJIS } from "@/lib/emojis";
+import {
+  isSupabaseConfigured,
+  supabase,
+  getSession,
+  signInWithEmail,
+  signUpWithEmail,
+  signOut,
+} from "@/lib/supabaseSync";
 
 interface SettingsModalProps {
   open: boolean;
-  currentPlan: Plan;
   childrenProfiles: Child[];
   categories: string[];
   members: Member[];
@@ -17,10 +26,10 @@ interface SettingsModalProps {
   newChildName: string;
   newChildAvatar: string;
   onClose: () => void;
-  onSetPlan: (plan: Plan) => void;
   onRemoveChild: (childId: string) => void;
   onNewChildNameChange: (name: string) => void;
   onNewChildAvatarChange: (avatar: string) => void;
+  onChangeChildAvatar: (childId: string, avatar: string) => void;
   onAddNewChild: () => void;
   onRemoveMember: (memberId: string) => void;
   onNewMemberNameChange: (name: string) => void;
@@ -33,11 +42,12 @@ interface SettingsModalProps {
   onNewCategoryNameChange: (name: string) => void;
   onAddNewCategory: () => void;
   onResetOnboarding: () => void;
+  currentPlan?: "free" | "premium";
+  onShowPremium?: () => void;
 }
 
 export function SettingsModal({
   open,
-  currentPlan,
   childrenProfiles,
   categories,
   members,
@@ -49,10 +59,10 @@ export function SettingsModal({
   newChildName,
   newChildAvatar,
   onClose,
-  onSetPlan,
   onRemoveChild,
   onNewChildNameChange,
   onNewChildAvatarChange,
+  onChangeChildAvatar,
   onAddNewChild,
   onRemoveMember,
   onNewMemberNameChange,
@@ -65,7 +75,70 @@ export function SettingsModal({
   onNewCategoryNameChange,
   onAddNewCategory,
   onResetOnboarding,
+  currentPlan = "free",
+  onShowPremium,
 }: SettingsModalProps) {
+  const [avatarPickerFor, setAvatarPickerFor] = useState<string | null>(null);
+
+  // ── 認証状態 ──────────────────────────────────────────────
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authDisplayName, setAuthDisplayName] = useState("");
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    if (!open || !isSupabaseConfigured) {
+      setAuthReady(true);
+      return;
+    }
+    getSession().then((session) => {
+      setCurrentUserEmail(session?.user?.email ?? null);
+      setAuthReady(true);
+    });
+
+    const { data: listener } = supabase!.auth.onAuthStateChange((_event, session) => {
+      setCurrentUserEmail(session?.user?.email ?? null);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, [open]);
+
+  const handleAuth = async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      if (authMode === "signin") {
+        await signInWithEmail(authEmail, authPassword);
+      } else {
+        await signUpWithEmail(authEmail, authPassword, authDisplayName || authEmail);
+      }
+      setAuthEmail("");
+      setAuthPassword("");
+      setAuthDisplayName("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setAuthError(
+        msg.includes("Invalid login credentials")
+          ? "メールアドレスまたはパスワードが正しくありません"
+          : msg.includes("User already registered")
+          ? "このメールアドレスはすでに登録されています"
+          : msg.includes("Password should be at least")
+          ? "パスワードは6文字以上で入力してください"
+          : msg
+      );
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+    setCurrentUserEmail(null);
+  };
+
   if (!open) return null;
 
   return (
@@ -78,45 +151,153 @@ export function SettingsModal({
           </button>
         </div>
 
-        <div className="border border-teal-100 bg-teal-50/20 rounded-2xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
+        {/* ── プラン ─────────────────────── */}
+        <div className="border-t border-slate-100 pt-3">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-2">プラン</span>
+          <div
+            className={`flex items-center justify-between p-3 rounded-xl border ${currentPlan === "premium" ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-200"}`}
+          >
             <div>
-              <span className="text-sm font-bold text-slate-700 block">現在のプラン</span>
-              <span className="text-[10px] text-slate-500 block">Googleカレンダー連携、絵本年1冊無料、自動バックアップ</span>
+              <p className={`text-sm font-bold ${currentPlan === "premium" ? "text-amber-700" : "text-slate-700"}`}>
+                {currentPlan === "premium" ? "✨ プレミアムプラン" : "無料プラン"}
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {currentPlan === "premium" ? "すべての機能をご利用いただけます" : "書類10件・メンバー1人まで"}
+              </p>
             </div>
-            <span
-              className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                currentPlan === "premium"
-                  ? "bg-amber-100 text-amber-700"
-                  : "bg-slate-200 text-slate-600"
-              }`}
-            >
-              {currentPlan === "premium" ? "プレミアム" : "フリー"}
-            </span>
+            {currentPlan !== "premium" && onShowPremium && (
+              <button
+                type="button"
+                onClick={onShowPremium}
+                className="px-3 py-1.5 bg-amber-500 text-white text-xs font-bold rounded-lg"
+              >
+                アップグレード
+              </button>
+            )}
           </div>
-          {currentPlan === "free" ? (
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => onSetPlan("premium")}
-                className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition"
-              >
-                <CreditCard size={14} /> プレミアムにアップグレード（月額500円）
-              </button>
-              <p className="text-[9px] text-slate-400 text-center">※最初の1ヶ月は無料でお試しいただけます</p>
+        </div>
+
+        {/* ── クラウド同期・アカウント ─────────────────────── */}
+        <div className="space-y-3 border-t border-slate-100 pt-3">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 block">
+            {isSupabaseConfigured
+              ? <><Cloud size={13} className="text-teal-500" /> クラウド同期・アカウント</>
+              : <><CloudOff size={13} className="text-slate-400" /> クラウド同期（未設定）</>
+            }
+          </span>
+
+          {!isSupabaseConfigured && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-500 leading-relaxed">
+              <p className="font-bold text-slate-600 mb-1">クラウド同期を有効にするには</p>
+              <p>
+                <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px]">.env.local</code> に
+                <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] mx-1">NEXT_PUBLIC_SUPABASE_URL</code>
+                と
+                <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] mx-1">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
+                を設定してください。
+              </p>
             </div>
-          ) : (
+          )}
+
+          {isSupabaseConfigured && !authReady && (
+            <div className="flex items-center gap-2 py-2 text-sm text-slate-400">
+              <Loader2 size={14} className="animate-spin" /> 読み込み中...
+            </div>
+          )}
+
+          {isSupabaseConfigured && authReady && currentUserEmail && (
             <div className="space-y-2">
-              <div className="bg-amber-50 border border-amber-200/50 rounded-xl p-2.5 text-[10px] text-amber-800 leading-relaxed">
-                🎉 プレミアム加入中: じぃじ・ばぁば共有スライドショー無制限、年間行事Google同期、製本割引コードが有効です。
+              <div className="flex items-center justify-between bg-teal-50 border border-teal-200 rounded-xl px-3 py-2.5">
+                <div>
+                  <p className="text-xs font-bold text-teal-800">ログイン中</p>
+                  <p className="text-[11px] text-teal-600 mt-0.5 truncate max-w-[200px]">{currentUserEmail}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-500 font-bold px-2 py-1.5 rounded-lg bg-white border border-slate-200 transition"
+                >
+                  <LogOut size={12} /> ログアウト
+                </button>
               </div>
+              <p className="text-[10px] text-teal-600 pl-1">
+                ✓ データはリアルタイムでクラウドに同期されています
+              </p>
+            </div>
+          )}
+
+          {isSupabaseConfigured && authReady && !currentUserEmail && (
+            <div className="space-y-3">
+              <div className="flex bg-slate-100 rounded-xl p-0.5 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode("signin"); setAuthError(null); }}
+                  className={`flex-1 py-1.5 rounded-lg text-center transition ${
+                    authMode === "signin" ? "bg-white text-slate-800 shadow" : "text-slate-400"
+                  }`}
+                >
+                  ログイン
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode("signup"); setAuthError(null); }}
+                  className={`flex-1 py-1.5 rounded-lg text-center transition ${
+                    authMode === "signup" ? "bg-white text-slate-800 shadow" : "text-slate-400"
+                  }`}
+                >
+                  新規登録
+                </button>
+              </div>
+
+              {authMode === "signup" && (
+                <input
+                  type="text"
+                  value={authDisplayName}
+                  onChange={(e) => setAuthDisplayName(e.target.value)}
+                  placeholder="表示名（例：ママ、パパ）"
+                  className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 bg-white outline-none focus:border-teal-400"
+                />
+              )}
+              <input
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="メールアドレス"
+                className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 bg-white outline-none focus:border-teal-400"
+              />
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="パスワード（6文字以上）"
+                className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 bg-white outline-none focus:border-teal-400"
+                onKeyDown={(e) => { if (e.key === "Enter") handleAuth(); }}
+              />
+
+              {authError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  {authError}
+                </p>
+              )}
+
               <button
                 type="button"
-                onClick={() => onSetPlan("free")}
-                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-500 font-bold text-xs rounded-xl transition"
+                onClick={handleAuth}
+                disabled={authLoading || !authEmail || !authPassword}
+                className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:bg-slate-200 disabled:text-slate-400 transition"
               >
-                サブスクリプションを解約する（フリーに戻す）
+                {authLoading ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : authMode === "signin" ? (
+                  <><LogIn size={14} /> ログイン</>
+                ) : (
+                  <><UserPlus size={14} /> 登録して同期開始</>
+                )}
               </button>
+
+              <p className="text-[10px] text-slate-400 text-center">
+                登録すると家族で同じデータを共有できます
+              </p>
             </div>
           )}
         </div>
@@ -155,8 +336,16 @@ export function SettingsModal({
               key={child.id}
               className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm"
             >
-              <span className="font-medium">
-                {child.avatar} {child.name.split(" ")[0]}
+              <span className="font-medium flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAvatarPickerFor(avatarPickerFor === child.id ? null : child.id)}
+                  className="w-9 h-9 rounded-full bg-white border border-slate-200 flex items-center justify-center text-xl active:scale-95 transition"
+                  title="アイコンを変更"
+                >
+                  {child.avatar}
+                </button>
+                {child.name.split(" ")[0]}
               </span>
               {childrenProfiles.length > 1 && (
                 <button
@@ -169,6 +358,19 @@ export function SettingsModal({
               )}
             </div>
           ))}
+
+          {/* 既存の子のアイコン編集グリッド */}
+          {avatarPickerFor && avatarPickerFor !== "new" && (
+            <EmojiGrid
+              selected={childrenProfiles.find((c) => c.id === avatarPickerFor)?.avatar}
+              onSelect={(emoji) => {
+                onChangeChildAvatar(avatarPickerFor, emoji);
+                setAvatarPickerFor(null);
+              }}
+              onClose={() => setAvatarPickerFor(null)}
+            />
+          )}
+
           <div className="flex gap-2">
             <input
               type="text"
@@ -177,15 +379,14 @@ export function SettingsModal({
               placeholder="名前"
               className="flex-1 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 bg-white"
             />
-            <select
-              value={newChildAvatar}
-              onChange={(event) => onNewChildAvatarChange(event.target.value)}
-              className="border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 bg-white"
+            <button
+              type="button"
+              onClick={() => setAvatarPickerFor(avatarPickerFor === "new" ? null : "new")}
+              className="w-12 border border-slate-200 rounded-xl text-xl bg-white active:scale-95 transition"
+              title="アイコンを選ぶ"
             >
-              <option value="👦">👦</option>
-              <option value="👧">👧</option>
-              <option value="👶">👶</option>
-            </select>
+              {newChildAvatar}
+            </button>
             <button
               type="button"
               onClick={onAddNewChild}
@@ -194,6 +395,18 @@ export function SettingsModal({
               追加
             </button>
           </div>
+
+          {/* 追加用アイコン選択グリッド */}
+          {avatarPickerFor === "new" && (
+            <EmojiGrid
+              selected={newChildAvatar}
+              onSelect={(emoji) => {
+                onNewChildAvatarChange(emoji);
+                setAvatarPickerFor(null);
+              }}
+              onClose={() => setAvatarPickerFor(null)}
+            />
+          )}
         </div>
 
         {/* 家族メンバー */}
@@ -331,6 +544,41 @@ export function SettingsModal({
         >
           閉じる
         </button>
+      </div>
+    </div>
+  );
+}
+
+function EmojiGrid({
+  selected,
+  onSelect,
+  onClose,
+}: {
+  selected?: string;
+  onSelect: (emoji: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="bg-white border border-teal-200 rounded-2xl p-3 shadow-sm">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-bold text-teal-700">好きなアイコンを選んでください</span>
+        <button type="button" onClick={onClose} className="text-slate-400 p-1">
+          <X size={14} />
+        </button>
+      </div>
+      <div className="grid grid-cols-8 gap-1 max-h-44 overflow-y-auto">
+        {AVATAR_EMOJIS.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            onClick={() => onSelect(emoji)}
+            className={`aspect-square rounded-lg text-xl flex items-center justify-center active:scale-90 transition ${
+              selected === emoji ? "bg-teal-100 ring-2 ring-teal-400" : "hover:bg-slate-100"
+            }`}
+          >
+            {emoji}
+          </button>
+        ))}
       </div>
     </div>
   );

@@ -7,6 +7,8 @@ export async function POST(request: Request) {
       base64?: unknown;
       mimeType?: unknown;
       categoryName?: unknown;
+      categories?: unknown;
+      images?: unknown;
     };
 
     const base64 = typeof body.base64 === "string" ? body.base64 : "";
@@ -14,15 +16,33 @@ export async function POST(request: Request) {
       typeof body.mimeType === "string" ? body.mimeType : "image/jpeg";
     const categoryName =
       typeof body.categoryName === "string" ? body.categoryName : "未分類";
+    const categoriesList = Array.isArray(body.categories)
+      ? (body.categories as unknown[]).filter((c): c is string => typeof c === "string")
+      : undefined;
 
-    if (!base64.trim()) {
+    // 複数ページ（両面など）対応
+    const images = Array.isArray(body.images)
+      ? (body.images as unknown[])
+          .filter(
+            (im): im is { base64: string; mimeType: string } =>
+              !!im && typeof (im as any).base64 === "string"
+          )
+          .map((im) => ({ base64: im.base64, mimeType: im.mimeType || "image/jpeg" }))
+      : [];
+
+    if (images.length === 0 && !base64.trim()) {
       return NextResponse.json(
-        { error: "base64 image data is required." },
+        { error: "image data is required." },
         { status: 400 }
       );
     }
 
-    const result = await analyzeImageOcr(base64, mimeType, categoryName);
+    const result = await analyzeImageOcr(
+      images.length > 0 ? images : base64,
+      mimeType,
+      categoryName,
+      categoriesList
+    );
     if (!result) {
       return NextResponse.json({ error: "OCR_FAILED", detail: "No API key configured." }, { status: 500 });
     }
@@ -30,6 +50,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       text: result.text,
       todoDrafts: result.todoDrafts,
+      suggestedTitle: result.suggestedTitle,
+      suggestedCategory: result.suggestedCategory,
     });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);

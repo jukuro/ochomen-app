@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { ArrowRight, ShoppingBag, ClipboardList, Bell, Edit, Trash2, Check, X } from "lucide-react";
+import { useState, useRef } from "react";
+import { ArrowRight, ShoppingBag, ClipboardList, Bell, Edit, Trash2, Check, X, CalendarDays, CalendarX } from "lucide-react";
 import type { Child, Entry, Todo, Member } from "@/lib/types";
 import { formatRelativeDate, formatShortDate, isOverdue, isToday } from "@/lib/dates";
+import { ConfirmModal } from "./ConfirmModal";
 
 interface TodoRowProps {
   todo: Todo;
@@ -29,6 +30,9 @@ export function TodoRow({
   onDeleteTodo,
 }: TodoRowProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [swipeX, setSwipeX] = useState(0);
+  const touchStartX = useRef<number | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [editTask, setEditTask] = useState(todo.task);
   const [editDueDate, setEditDueDate] = useState(todo.dueDate);
   const [editAssignedTo, setEditAssignedTo] = useState(todo.assignedTo || "共通");
@@ -41,6 +45,7 @@ export function TodoRow({
   );
   const overdue = isOverdue(todo.dueDate) && !todo.isCompleted;
   const isShopping = todo.type === "shopping";
+  const isEvent = todo.type === "event";
   const hasAlarm = todo.reminderAt && todo.reminderAt !== "none";
 
   const assignedMember = members.find((m) => m.name === todo.assignedTo);
@@ -195,11 +200,7 @@ export function TodoRow({
             </button>
             <button
               type="button"
-              onClick={() => {
-                if (confirm("このタスクを削除しますか？")) {
-                  onDeleteTodo(todo.id);
-                }
-              }}
+              onClick={() => setShowDeleteConfirm(true)}
               className="text-slate-400 hover:text-red-500 p-0.5"
             >
               <Trash2 size={12} />
@@ -236,9 +237,35 @@ export function TodoRow({
   }
 
   return (
+    <div className="relative overflow-hidden rounded-xl">
+      {/* スワイプ中だけ現れる背景アクション */}
+      {swipeX < 0 && (
+        <div className="absolute inset-y-0 right-0 w-full flex items-center justify-end pr-5 bg-slate-400 rounded-xl">
+          <span className="text-white text-xs font-bold flex items-center gap-1">
+            <CalendarX size={14} /> カレンダーのみに
+          </span>
+        </div>
+      )}
     <div
-      className={`flex items-center justify-between rounded-xl p-3 text-sm shadow-sm border ${
-        overdue ? "bg-red-50 border-red-100" : "bg-white border-slate-100"
+      onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+      onTouchMove={(e) => {
+        if (touchStartX.current === null) return;
+        const dx = e.touches[0].clientX - touchStartX.current;
+        if (dx < 0) setSwipeX(Math.max(dx, -120));
+      }}
+      onTouchEnd={() => {
+        if (swipeX < -80) {
+          onUpdateTodo(todo.id, { hiddenFromList: true });
+        }
+        setSwipeX(0);
+        touchStartX.current = null;
+      }}
+      style={{ transform: `translateX(${swipeX}px)`, transition: swipeX === 0 ? "transform 0.2s" : "none" }}
+      className={`relative flex items-center justify-between rounded-xl px-3 py-4 text-sm shadow-sm border-l-4 border-t border-r border-b ${
+        overdue ? "bg-red-50 border-red-100 border-l-red-400" :
+        isEvent ? "bg-blue-50 border-slate-100 border-l-blue-400" :
+        isShopping ? "bg-amber-50 border-slate-100 border-l-amber-400" :
+        "bg-white border-slate-100 border-l-teal-400"
       }`}
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -250,15 +277,19 @@ export function TodoRow({
         />
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <p className={`truncate text-slate-700 font-medium ${todo.isCompleted ? "line-through text-slate-400" : ""}`}>
+            <p className={`truncate text-slate-700 font-semibold text-base leading-snug ${todo.isCompleted ? "line-through text-slate-400" : ""}`}>
               {todo.task}
             </p>
-            {hasAlarm && <Bell size={12} className="text-teal-600 flex-shrink-0" />}
+            {hasAlarm && <Bell size={13} className="text-teal-600 flex-shrink-0" />}
           </div>
-          <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
-            <span className="flex items-center gap-0.5">
-              {isShopping ? <ShoppingBag size={10} className="text-amber-600" /> : <ClipboardList size={10} className="text-teal-600" />}
-              {isShopping ? "買い物" : "やること"}
+          <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+            <span className={`flex items-center gap-0.5 font-bold px-1.5 py-0.5 rounded text-[10px] ${
+              isEvent ? "bg-blue-100 text-blue-700" :
+              isShopping ? "bg-amber-100 text-amber-700" :
+              "bg-teal-50 text-teal-700"
+            }`}>
+              {isEvent ? <CalendarDays size={10} /> : isShopping ? <ShoppingBag size={10} /> : <ClipboardList size={10} />}
+              {isEvent ? "予定" : isShopping ? "買い物" : "やること"}
             </span>
             <span>·</span>
             <span>{primaryChild?.name.split(" ")[0] || "共通"}</span>
@@ -273,6 +304,9 @@ export function TodoRow({
               </>
             )}
           </p>
+          {todo.reason && (
+            <p className="text-[10px] text-slate-400 mt-1 truncate">💡 {todo.reason}</p>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0 ml-2">
@@ -285,11 +319,7 @@ export function TodoRow({
         </button>
         <button
           type="button"
-          onClick={() => {
-            if (confirm("このタスクを削除しますか？")) {
-              onDeleteTodo(todo.id);
-            }
-          }}
+          onClick={() => setShowDeleteConfirm(true)}
           className="text-slate-400 hover:text-red-500 p-1 bg-slate-50 hover:bg-slate-100 rounded"
         >
           <Trash2 size={12} />
@@ -303,18 +333,33 @@ export function TodoRow({
             元書類
           </button>
         )}
-        <div className={`text-[10px] font-bold px-2 py-1 rounded-lg text-center leading-tight ${
+        <div className={`relative text-[10px] font-bold px-2 py-1 rounded-lg text-center leading-tight cursor-pointer ${
             overdue
               ? "text-red-600 bg-red-100"
               : isToday(todo.dueDate)
                 ? "text-amber-700 bg-amber-100"
                 : "text-slate-500 bg-slate-100"
           }`}
+          title="タップで日付変更"
         >
           <div>{formatShortDate(todo.dueDate)}</div>
           <div className="text-[8px] opacity-70">{formatRelativeDate(todo.dueDate)}</div>
+          <input
+            type="date"
+            value={todo.dueDate || ""}
+            onChange={(e) => onUpdateTodo(todo.id, { dueDate: e.target.value })}
+            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+          />
         </div>
       </div>
+    </div>
+
+    <ConfirmModal
+      open={showDeleteConfirm}
+      message="このタスクを削除しますか？"
+      onConfirm={() => onDeleteTodo(todo.id)}
+      onCancel={() => setShowDeleteConfirm(false)}
+    />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   Calendar as CalendarIcon,
   AlertCircle,
   ChevronDown,
+  ChevronUp,
   RefreshCw,
   Home,
   Plus,
@@ -21,19 +22,29 @@ import {
   Sparkles,
   Search,
 } from "lucide-react";
-import type { Todo, Entry, Child, Screen, Plan, TodoDraft, Member, Diary, Milestone } from "@/lib/types";
+import type { Todo, Entry, Child, Screen, TodoDraft, Member, Diary, CaptureDoc, CapturePage } from "@/lib/types";
 import { APP_TODAY, isOverdue, isToday, isTomorrow } from "@/lib/dates";
 import { localAppStateStore, type AppState } from "@/lib/appState";
 import { DEMO_CHILDREN, DEMO_ENTRIES } from "@/lib/demoData";
 import { createLocalId } from "@/lib/ids";
+import { STANDARD_CATEGORIES } from "@/lib/categories";
+import { rotateImageDataUrl } from "@/lib/imageCompress";
 import { analyzeOcrText } from "@/lib/ocrAnalysis";
 import { EntryCard } from "@/components/EntryCard";
 import { Onboarding } from "@/components/Onboarding";
-import { PaywallModal } from "@/components/PaywallModal";
 import { ScanModal } from "@/components/ScanModal";
+import { BatchScanModal } from "@/components/BatchScanModal";
 import { SettingsModal } from "@/components/SettingsModal";
 import { TodoRow } from "@/components/TodoRow";
 import { Toast } from "@/components/Toast";
+import { PremiumModal, PLAN_LIMITS, type PlanId } from "@/components/PremiumModal";
+import {
+  isSupabaseConfigured,
+  supabase,
+  pullFromSupabase,
+  pushToSupabase,
+  ensureFamily,
+} from "@/lib/supabaseSync";
 
 export default function App() {
   const [hydrated, setHydrated] = useState(false);
@@ -47,24 +58,37 @@ export default function App() {
 
   const [categories, setCategories] = useState<string[]>(["お帳面", "園だより", "給食だより"]);
   const [activeTab, setActiveTab] = useState<string>("all");
-  const [currentPlan, setCurrentPlan] = useState<Plan>("free");
   const [entries, setEntries] = useState<Entry[]>(DEMO_ENTRIES);
 
   const entryRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const recognitionRef = useRef<any>(null);
-  const milestoneRecognitionRef = useRef<any>(null);
+  const shouldKeepRecordingRef = useRef(false);
+  const committedTextRef = useRef(""); // 完了済みセッションの確定テキスト
   const diaryTranscriptRef = useRef("");
   const [currentCalendarMonth, setCurrentCalendarMonth] = useState(APP_TODAY.slice(0, 7));
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [viewModes, setViewModes] = useState<Record<string, "ocr" | "image">>({});
 
   const [isScanModalOpen, setIsScanModalOpen] = useState(false);
+  const [isBatchOpen, setIsBatchOpen] = useState(false);
+  const [captureDocs, setCaptureDocs] = useState<CaptureDoc[]>([]);
+  const [batchProcessing, setBatchProcessing] = useState(false);
+  const [batchConfirmMode, setBatchConfirmMode] = useState(false);
+  const [scanMode, setScanMode] = useState<"quick" | "full">("full");
+  const [suggestedTitle, setSuggestedTitle] = useState("");
+  const [suggestedCategory, setSuggestedCategory] = useState("");
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightTodoId, setHighlightTodoId] = useState<string | null>(null);
+  const [openEntryId, setOpenEntryId] = useState<string | null>(null);
+  const [openEntryHighlight, setOpenEntryHighlight] = useState<string>("");
+  const [showCalendarCompletedTodos, setShowCalendarCompletedTodos] = useState(false);
   const lastScanDataRef = useRef<{ base64: string; mimeType: string } | null>(null);
   const [scanErrorType, setScanErrorType] = useState<string | null>(null);
+  const [alarmNotice, setAlarmNotice] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [searchActive, setSearchActive] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [editingCategoryIdx, setEditingCategoryIdx] = useState<number | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -114,60 +138,29 @@ export default function App() {
   const [growthTab, setGrowthTab] = useState<"print" | "album">("print");
   const [newDiaryRaw, setNewDiaryRaw] = useState("");
   const [diaryStretchLevel, setDiaryStretchLevel] = useState<"raw" | "light" | "deep">("light");
-  const [learnedWords, setLearnedWords] = useState<string[]>(["しいの実保育園", "こあちゃん", "お砂遊び"]);
   const [selectedDiaryTagFilter, setSelectedDiaryTagFilter] = useState<string>("すべて");
   const [selectedNewDiaryTags, setSelectedNewDiaryTags] = useState<string[]>([]);
   const [editingDiaryId, setEditingDiaryId] = useState<string | null>(null);
   const [editingDiaryContent, setEditingDiaryContent] = useState("");
+  const [showDiaryFullscreen, setShowDiaryFullscreen] = useState(false);
+  const [showCalendarFullscreen, setShowCalendarFullscreen] = useState(false);
+  const [showTodayTodosExpanded, setShowTodayTodosExpanded] = useState(false);
+  const [recordTodosExpanded, setRecordTodosExpanded] = useState(false);
+  const [calendarViewMode, setCalendarViewMode] = useState<"month" | "week" | "day">("month");
+  const [calendarQuickAddDate, setCalendarQuickAddDate] = useState<string | null>(null);
+  const [calendarQuickTask, setCalendarQuickTask] = useState("");
+  const [calendarQuickType, setCalendarQuickType] = useState<"todo" | "event" | "shopping">("todo");
 
-  const [milestones, setMilestones] = useState<Milestone[]>([
-    {
-      id: "m_1",
-      childId: "c1",
-      date: "2023-09-15",
-      type: "milestone",
-      title: "初めて立った！",
-      description: "おもちゃのテーブルに手をつかずに、2〜3秒ふらふらしながら自分の力で立てました！",
-    },
-    {
-      id: "m_2",
-      childId: "c1",
-      date: "2024-04-10",
-      type: "health",
-      title: "1歳半健診",
-      description: "歯科健診も虫歯なし。積み木を上手に4つ重ねられました。",
-    },
-    {
-      id: "m_3",
-      childId: "c1",
-      date: "2024-04-10",
-      type: "growth",
-      title: "身体測定 (1歳半)",
-      description: "身長: 79.5cm / 体重: 10.2kg",
-    },
-  ]);
-  const [albumSubTab, setAlbumSubTab] = useState<"diary" | "timeline">("diary");
-  const [isAddingMilestone, setIsAddingMilestone] = useState(false);
   const [isAddingDiary, setIsAddingDiary] = useState(false);
-  const [isParsingMilestone, setIsParsingMilestone] = useState(false);
-  const [milestoneVoiceInput, setMilestoneVoiceInput] = useState("");
-  const [isRecordingMilestoneVoice, setIsRecordingMilestoneVoice] = useState(false);
-  const [newMilestoneType, setNewMilestoneType] = useState<"milestone" | "growth" | "health">("milestone");
-  const [newMilestoneTitle, setNewMilestoneTitle] = useState("");
-  const [newMilestoneDate, setNewMilestoneDate] = useState(APP_TODAY);
-  const [newMilestoneDesc, setNewMilestoneDesc] = useState("");
-  const [newMilestoneHeight, setNewMilestoneHeight] = useState("");
-  const [newMilestoneWeight, setNewMilestoneWeight] = useState("");
 
   const [zoomedImageId, setZoomedImageId] = useState<string | null>(null);
   const [newChildName, setNewChildName] = useState("");
   const [newChildAvatar, setNewChildAvatar] = useState("👦");
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [paywall, setPaywall] = useState<{
-    title: string;
-    description: string;
-  } | null>(null);
+  const [currentPlan, setCurrentPlan] = useState<PlanId>("free");
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [premiumTrigger, setPremiumTrigger] = useState<string | undefined>(undefined);
 
   const persistState = useCallback(
     (overrides?: Partial<AppState>) => {
@@ -177,33 +170,102 @@ export default function App() {
         kindergartenName,
         categories,
         entries,
-        currentPlan,
         ...overrides,
       };
       localAppStateStore.save(state);
+      // オフラインファースト: Supabase が設定済みかつ認証済みなら非同期で push
+      if (isSupabaseConfigured) {
+        pushToSupabase(state).catch(() => {/* ネットワーク不在時は握り潰す */});
+      }
     },
-    [children, kindergartenName, categories, entries, currentPlan]
+    [children, kindergartenName, categories, entries]
   );
 
+  // 初回ロード: localStorage → state、その後 Supabase からの pull を試みる
   useEffect(() => {
-    try {
-      const state = localAppStateStore.load();
-      if (state) {
-        queueMicrotask(() => {
-          setChildren(state.children);
-          setKindergartenName(state.kindergartenName);
-          setCategories(state.categories);
-          setEntries(state.entries);
-          setCurrentPlan(state.currentPlan);
-          setSelectedChildIds(state.children.map((c) => c.id));
-          setTargetChildIds(state.children.map((c) => c.id));
-          setShowOnboarding(false);
-        });
+    let cancelled = false;
+
+    const init = async () => {
+      // 1) localStorage からロード（即時）
+      try {
+        const localState = localAppStateStore.load();
+        if (localState) {
+          queueMicrotask(() => {
+            if (cancelled) return;
+            setChildren(localState.children);
+            setKindergartenName(localState.kindergartenName);
+            setCategories(localState.categories);
+            setEntries(localState.entries);
+            setSelectedChildIds(localState.children.map((c) => c.id));
+            setTargetChildIds(localState.children.map((c) => c.id));
+            setShowOnboarding(false);
+          });
+        }
+      } catch {
+        /* ignore corrupt storage */
       }
-    } catch {
-      /* ignore corrupt storage */
+
+      // 2) Supabase からの pull（設定済みかつ認証済みの場合のみ）
+      if (isSupabaseConfigured) {
+        try {
+          const remote = await pullFromSupabase();
+          if (remote && !cancelled) {
+            setChildren(remote.children.length > 0 ? remote.children : []);
+            setKindergartenName(remote.kindergartenName);
+            setCategories(remote.categories.length > 0 ? remote.categories : []);
+            setEntries(remote.entries);
+            if (remote.children.length > 0) {
+              setSelectedChildIds(remote.children.map((c) => c.id));
+              setTargetChildIds(remote.children.map((c) => c.id));
+              setShowOnboarding(false);
+            }
+            // Supabase のデータで localStorage も更新
+            localAppStateStore.save({
+              onboardingComplete: true,
+              children: remote.children,
+              kindergartenName: remote.kindergartenName,
+              categories: remote.categories,
+              entries: remote.entries,
+            });
+          }
+        } catch {
+          /* Supabase 未ログインやネットワークエラーは無視 */
+        }
+      }
+
+      if (!cancelled) queueMicrotask(() => setHydrated(true));
+    };
+
+    init();
+
+    // Supabase Auth の変化を購読: ログインしたらデータを pull
+    if (isSupabaseConfigured && supabase) {
+      const { data: listener } = supabase.auth.onAuthStateChange(async (event) => {
+        if (event === "SIGNED_IN") {
+          // 新規ログイン: ファミリー作成（初回のみ）してからデータ pull
+          await ensureFamily("ユーザー");
+          const remote = await pullFromSupabase();
+          if (remote) {
+            setChildren(remote.children.length > 0 ? remote.children : []);
+            setKindergartenName(remote.kindergartenName);
+            setCategories(remote.categories.length > 0 ? remote.categories : []);
+            setEntries(remote.entries);
+            if (remote.children.length > 0) {
+              setSelectedChildIds(remote.children.map((c) => c.id));
+              setTargetChildIds(remote.children.map((c) => c.id));
+              setShowOnboarding(false);
+            }
+          }
+        }
+      });
+      return () => {
+        cancelled = true;
+        listener.subscription.unsubscribe();
+      };
     }
-    queueMicrotask(() => setHydrated(true));
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -243,9 +305,7 @@ export default function App() {
 
     if (urgentReminder) {
       const timer = setTimeout(() => {
-        setToastMessage(
-          `⏰ アラーム [${urgentReminder.assignedTo || "共通"}]: 「${urgentReminder.task}」の期限が近づいています！`
-        );
+        setAlarmNotice(`⏰ 「${urgentReminder.task}」の期限が近づいています`);
       }, 1500);
       return () => clearTimeout(timer);
     }
@@ -261,19 +321,24 @@ export default function App() {
     );
   };
 
-  const scrollToEntry = (entryId: string, todoId?: string) => {
+  const scrollToEntry = (entryId: string, todoId?: string, opts?: { asOcr?: boolean; highlightText?: string }) => {
     markEntryRead(entryId);
     setCurrentScreen("timeline");
+    setGrowthTab("print");
     if (todoId) setHighlightTodoId(todoId);
+    const viewMode = opts?.asOcr ? "ocr" : todoId ? "image" : "ocr";
+    setViewModes((prev) => ({ ...prev, [entryId]: viewMode }));
+    if (opts?.asOcr || !todoId) setOpenEntryId(entryId);
+    if (opts?.highlightText) setOpenEntryHighlight(opts.highlightText);
+    else setOpenEntryHighlight("");
     setTimeout(() => {
       const element = entryRefs.current[entryId];
       if (element) {
-        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
         element.classList.add("ring-4", "ring-teal-500", "ring-opacity-50");
         setTimeout(() => {
           element.classList.remove("ring-4", "ring-teal-500", "ring-opacity-50");
         }, 1500);
-        setViewModes((prev) => ({ ...prev, [entryId]: "image" }));
         if (todoId) {
           setTimeout(() => {
             const todoEl = document.getElementById(`todo-entry-${todoId}`);
@@ -281,7 +346,7 @@ export default function App() {
           }, 400);
         }
       }
-    }, 150);
+    }, 200);
   };
 
   const handleOnboardingComplete = (data: {
@@ -330,7 +395,6 @@ export default function App() {
         kindergartenName: data.kindergartenName,
         categories: data.categories,
         entries: newEntries,
-        currentPlan: "free",
     });
   };
 
@@ -365,13 +429,6 @@ export default function App() {
   };
 
   const handleAddNewChild = () => {
-    if (currentPlan === "free" && children.length >= 2) {
-      setPaywall({
-        title: "お子さまを追加するにはプレミアムが必要です",
-        description: "無料プランではお子さま2人まで登録できます。3人以上のお便りをまとめて管理するにはプレミアムプランをご利用ください。",
-      });
-      return;
-    }
     const name = newChildName.trim();
     if (!name) return;
     const colors = [
@@ -409,16 +466,19 @@ export default function App() {
     const response = await fetch("/api/scan-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ base64, mimeType, categoryName: selectedCategory }),
+      // すぐ登録のカテゴリー提案は定番リストから選ばせる（乱立防止）
+      body: JSON.stringify({ base64, mimeType, categoryName: selectedCategory, categories: STANDARD_CATEGORIES }),
     });
 
     const data = await response.json() as {
       text?: string;
       error?: string;
+      suggestedTitle?: string;
+      suggestedCategory?: string;
       todoDrafts?: Array<{
         task: string; dueDate: string; assignedTo: string;
         type: "todo" | "shopping"; reminderAt: "none" | "today" | "1day" | "3day";
-        confidence?: number;
+        confidence?: number; reason?: string;
       }>;
     };
 
@@ -449,6 +509,8 @@ export default function App() {
 
       setScanErrorType(null);
       setOcrTextResult(data.text || "");
+      setSuggestedTitle(data.suggestedTitle || "");
+      setSuggestedCategory(data.suggestedCategory || categories[0] || "");
       setTodoDrafts(
         (data.todoDrafts || []).map((d) => ({ id: createLocalId("draft"), ...d }))
       );
@@ -522,6 +584,7 @@ export default function App() {
         originalEntryId: entryId,
         type: draft.type || "todo",
         reminderAt: draft.reminderAt || "none",
+        reason: draft.reason,
       }));
 
     const newEntry: Entry = {
@@ -546,6 +609,262 @@ export default function App() {
     } else {
       showToast("お帳面を登録しました");
     }
+  };
+
+  const handleQuickSave = (title: string, category: string) => {
+    const cat = category.trim() || "その他";
+    // AIが提案した新しいカテゴリーはリストに追加してタブとして残す
+    if (!categories.includes(cat)) {
+      setCategories((prev) => [...prev, cat]);
+    }
+    const entryId = createLocalId("entry");
+
+    // すぐ登録でもAIが抽出したやること・買い物・予定は自動で登録する
+    const generatedTodos: Todo[] = todoDrafts
+      .filter((draft) => draft.task.trim())
+      .map((draft) => ({
+        id: createLocalId("todo"),
+        task: draft.task.trim(),
+        dueDate: draft.dueDate || APP_TODAY,
+        isCompleted: false,
+        assignedTo: draft.assignedTo,
+        originalEntryId: entryId,
+        type: draft.type || "todo",
+        reminderAt: draft.reminderAt || "none",
+        reason: draft.reason,
+      }));
+
+    const newEntry: Entry = {
+      id: entryId,
+      childIds: targetChildIds,
+      category: cat,
+      date: APP_TODAY,
+      ocrText: ocrTextResult,
+      imageUrl: scannedImage || undefined,
+      todos: generatedTodos.length > 0 ? generatedTodos : undefined,
+      isRead: false,
+      title: title || undefined,
+    };
+    setEntries([newEntry, ...entries]);
+    setIsScanModalOpen(false);
+    resetScanForm();
+    setCurrentScreen("home");
+    showToast(
+      generatedTodos.length > 0
+        ? `「${cat}」に保存（やること${generatedTodos.length}件も追加）`
+        : `「${cat}」に保存しました`
+    );
+  };
+
+  // ── 統合スキャン（複数書類・複数ページ対応） ──
+  const handleAddNewDoc = (pages: CapturePage[]) => {
+    setCaptureDocs((prev) => [
+      ...prev,
+      { id: createLocalId("doc"), pages, status: "pending" },
+    ]);
+  };
+
+  const handleAddPageToDoc = (docId: string, page: CapturePage) => {
+    setCaptureDocs((prev) =>
+      prev.map((d) => (d.id === docId ? { ...d, pages: [...d.pages, page] } : d))
+    );
+  };
+
+  const handleRemoveDoc = (docId: string) => {
+    setCaptureDocs((prev) => prev.filter((d) => d.id !== docId));
+  };
+
+  const handleRemovePageFromDoc = (docId: string, pageId: string) => {
+    setCaptureDocs((prev) =>
+      prev
+        .map((d) => (d.id === docId ? { ...d, pages: d.pages.filter((p) => p.id !== pageId) } : d))
+        .filter((d) => d.pages.length > 0)
+    );
+  };
+
+  const handleUpdateDocMeta = (docId: string, changes: Partial<Pick<CaptureDoc, "title" | "category">>) => {
+    setCaptureDocs((prev) => prev.map((d) => (d.id === docId ? { ...d, ...changes } : d)));
+  };
+
+  const handleRotatePage = async (docId: string, pageId: string) => {
+    const doc = captureDocs.find((d) => d.id === docId);
+    const page = doc?.pages.find((p) => p.id === pageId);
+    if (!page) return;
+    try {
+      const rotated = await rotateImageDataUrl(page.previewUrl, 90);
+      setCaptureDocs((prev) =>
+        prev.map((d) =>
+          d.id === docId
+            ? {
+                ...d,
+                pages: d.pages.map((p) =>
+                  p.id === pageId ? { ...p, base64: rotated.base64, mimeType: rotated.mimeType, previewUrl: rotated.previewUrl } : p
+                ),
+              }
+            : d
+        )
+      );
+    } catch {
+      showToast("画像の回転に失敗しました");
+    }
+  };
+
+  /** 1書類分（複数ページ）をAPIに投げて解析 */
+  const scanDoc = async (doc: CaptureDoc) => {
+    const response = await fetch("/api/scan-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        images: doc.pages.map((p) => ({ base64: p.base64, mimeType: p.mimeType })),
+        categoryName: "未分類",
+        categories: STANDARD_CATEGORIES,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw { status: response.status, errorCode: data.error || "OCR_FAILED" };
+    return data as {
+      text?: string;
+      suggestedTitle?: string;
+      suggestedCategory?: string;
+      todoDrafts?: Array<{
+        task: string; dueDate: string; assignedTo: string;
+        type: "todo" | "shopping" | "event"; reminderAt: "none" | "today" | "1day" | "3day";
+        confidence?: number; reason?: string;
+      }>;
+    };
+  };
+
+  const createEntryFromDoc = (doc: CaptureDoc, title: string, cat: string, ocrText: string, drafts: TodoDraft[], childIds: string[]) => {
+    const entryId = createLocalId("entry");
+    const generatedTodos: Todo[] = drafts
+      .filter((d) => d.task?.trim())
+      .map((d) => ({
+        id: createLocalId("todo"),
+        task: d.task.trim(),
+        dueDate: d.dueDate || APP_TODAY,
+        isCompleted: false,
+        assignedTo: d.assignedTo,
+        originalEntryId: entryId,
+        type: d.type || "todo",
+        reminderAt: d.reminderAt || "none",
+        reason: d.reason,
+      }));
+    setCategories((prev) => (prev.includes(cat) ? prev : [...prev, cat]));
+    const newEntry: Entry = {
+      id: entryId,
+      childIds,
+      category: cat,
+      date: APP_TODAY,
+      ocrText,
+      imageUrl: doc.pages[0]?.previewUrl,
+      todos: generatedTodos.length > 0 ? generatedTodos : undefined,
+      isRead: false,
+      title: title || undefined,
+    };
+    setEntries((prev) => [newEntry, ...prev]);
+  };
+
+  /** 解析を実行。autoCommit=true なら解析しながら自動登録、false なら確認モード（解析のみ） */
+  const handleProcessDocs = async (autoCommit: boolean) => {
+    if (batchProcessing) return;
+    setBatchProcessing(true);
+    setBatchConfirmMode(!autoCommit);
+    const childIds = [...targetChildIds];
+    // error 状態の書類も再試行対象に含める
+    const pending = captureDocs.filter((d) => d.status === "pending" || d.status === "error");
+    let doneCount = 0;
+    const failedDocIds: string[] = [];
+
+    for (let i = 0; i < pending.length; i++) {
+      const doc = pending[i];
+      // 2件目以降は Gemini のレート制限を避けるため 1 秒待機
+      if (i > 0) await new Promise((r) => setTimeout(r, 1000));
+
+      setCaptureDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, status: "processing" } : d)));
+      try {
+        let data;
+        try {
+          data = await scanDoc(doc);
+        } catch (firstErr: any) {
+          const isRateLimit = firstErr?.status === 429 || firstErr?.errorCode === "RATE_LIMIT";
+          if (isRateLimit) {
+            showToast("AIが混み合っています。5秒後に自動リトライします...");
+            await new Promise((r) => setTimeout(r, 5000));
+            data = await scanDoc(doc);
+          } else {
+            throw firstErr;
+          }
+        }
+
+        const cat = (data.suggestedCategory || "その他").trim() || "その他";
+        const title = (data.suggestedTitle || "").trim();
+        const ocrText = data.text || "";
+        const drafts: TodoDraft[] = (data.todoDrafts || []).map((d) => ({ id: createLocalId("draft"), ...d }));
+
+        setCaptureDocs((prev) =>
+          prev.map((d) =>
+            d.id === doc.id ? { ...d, status: "done", title: title || cat, category: cat, ocrText, todoDrafts: drafts } : d
+          )
+        );
+
+        if (autoCommit) {
+          createEntryFromDoc(doc, title, cat, ocrText, drafts, childIds);
+        }
+        doneCount += 1;
+        if (pending.length > 1) showToast(`解析中… ${doneCount}/${pending.length}件`);
+      } catch (err) {
+        console.error("doc scan error:", err);
+        failedDocIds.push(doc.id);
+        setCaptureDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, status: "error" } : d)));
+      }
+    }
+
+    setBatchProcessing(false);
+
+    if (autoCommit) {
+      if (failedDocIds.length === 0) {
+        // 全件成功 → モーダルを閉じる
+        showToast(`${doneCount}件の書類を登録しました`);
+        setCaptureDocs([]);
+        setIsBatchOpen(false);
+        setCurrentScreen("timeline");
+      } else {
+        // 一部失敗 → 成功分だけ削除し、失敗分はモーダルに残す
+        showToast(
+          doneCount > 0
+            ? `${doneCount}件登録・${failedDocIds.length}件失敗。赤い書類は削除して撮り直してください`
+            : `すべての書類の読み取りに失敗しました。撮り直してください`
+        );
+        setCaptureDocs((prev) => prev.filter((d) => failedDocIds.includes(d.id)));
+      }
+    } else {
+      showToast(
+        failedDocIds.length > 0
+          ? `${doneCount}件解析済み・${failedDocIds.length}件失敗`
+          : `${doneCount}件を解析しました。内容を確認してください`
+      );
+    }
+  };
+
+  /** 確認モードで内容を確認後に一括登録 */
+  const handleCommitConfirmed = () => {
+    const childIds = [...targetChildIds];
+    const doneDocs = captureDocs.filter((d) => d.status === "done");
+    doneDocs.forEach((doc) => {
+      createEntryFromDoc(
+        doc,
+        (doc.title || "").trim(),
+        (doc.category || "その他").trim() || "その他",
+        doc.ocrText || "",
+        doc.todoDrafts || [],
+        childIds
+      );
+    });
+    showToast(`${doneDocs.length}件の書類を登録しました`);
+    setCaptureDocs([]);
+    setBatchConfirmMode(false);
+    setIsBatchOpen(false);
+    setCurrentScreen("timeline");
   };
 
   const handleAddShoppingItemDirect = () => {
@@ -587,6 +906,53 @@ export default function App() {
     showToast("買い物アイテムを追加しました");
   };
 
+  const planLimits = PLAN_LIMITS[currentPlan];
+
+  /** 制限を超えている場合は PremiumModal を表示して true を返す */
+  const checkPremiumGate = (feature: string): boolean => {
+    if (currentPlan === "premium") return false;
+    setPremiumTrigger(feature);
+    setShowPremiumModal(true);
+    return true;
+  };
+
+  const handleAddTodoFromCalendar = () => {
+    if (!calendarQuickTask.trim() || !calendarQuickAddDate) return;
+    const entryId = "manual";
+    const newTodo: Todo = {
+      id: createLocalId("todo"),
+      task: calendarQuickTask.trim(),
+      dueDate: calendarQuickAddDate,
+      isCompleted: false,
+      assignedTo: selectedChildIds.length > 0 ? children.find((c) => c.id === selectedChildIds[0])?.name || "共通" : "共通",
+      originalEntryId: entryId,
+      type: calendarQuickType,
+      reminderAt: "none",
+    };
+
+    const existingManualIdx = entries.findIndex((e) => e.id === entryId);
+    if (existingManualIdx > -1) {
+      const updated = [...entries];
+      const prev = updated[existingManualIdx];
+      updated[existingManualIdx] = { ...prev, todos: [...(prev.todos || []), newTodo] };
+      setEntries(updated);
+    } else {
+      const newEntry: Entry = {
+        id: entryId,
+        childIds: selectedChildIds.length > 0 ? [selectedChildIds[0]] : [],
+        category: "お帳面",
+        date: APP_TODAY,
+        ocrText: "### 手動追加したやること\nカレンダーから手動で追加したタスクです。",
+        todos: [newTodo],
+        isRead: true,
+      };
+      setEntries([newEntry, ...entries]);
+    }
+    setCalendarQuickTask("");
+    setCalendarQuickAddDate(null);
+    showToast("やることを追加しました");
+  };
+
   const handleStartRecording = () => {
     const SpeechRecognitionImpl =
       typeof window !== "undefined"
@@ -604,32 +970,54 @@ export default function App() {
     recognition.interimResults = true;
 
     diaryTranscriptRef.current = "";
+    committedTextRef.current = "";
     setNewDiaryRaw("");
     setIsRecording(true);
+    shouldKeepRecordingRef.current = true;
 
-    recognition.onresult = (event: any) => {
-      let full = "";
-      for (let i = 0; i < event.results.length; i++) {
-        full += event.results[i][0].transcript;
-      }
-      diaryTranscriptRef.current = full;
-      setNewDiaryRaw(full);
+    const startSession = (rec: any) => {
+      rec.onresult = (event: any) => {
+        let sessionText = "";
+        for (let i = 0; i < event.results.length; i++) {
+          sessionText += event.results[i][0].transcript;
+        }
+        const display = committedTextRef.current + sessionText;
+        diaryTranscriptRef.current = display;
+        setNewDiaryRaw(display);
+      };
+
+      rec.onerror = (e: any) => {
+        if (e.error === "aborted" || e.error === "no-speech") return;
+        shouldKeepRecordingRef.current = false;
+        setIsRecording(false);
+      };
+
+      rec.onend = () => {
+        if (!shouldKeepRecordingRef.current) {
+          setIsRecording(false);
+          return;
+        }
+        // このセッションで認識されたテキストを確定済みに移す
+        committedTextRef.current = diaryTranscriptRef.current;
+        const newRec = new SpeechRecognitionImpl();
+        newRec.lang = "ja-JP";
+        newRec.continuous = false;
+        newRec.interimResults = true;
+        recognitionRef.current = newRec;
+        startSession(newRec);
+        newRec.start();
+      };
     };
 
-    recognition.onerror = () => {
-      setIsRecording(false);
-      showToast("音声入力でエラーが発生しました。テキストで入力してください。");
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-    };
-
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    startSession(recognition);
     recognitionRef.current = recognition;
     recognition.start();
   };
 
   const handleStopRecording = () => {
+    shouldKeepRecordingRef.current = false;
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
@@ -680,149 +1068,14 @@ export default function App() {
     }
   };
 
-  const handleStartMilestoneVoiceRecording = () => {
-    const SpeechRecognitionImpl =
-      typeof window !== "undefined"
-        ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-        : null;
-
-    if (!SpeechRecognitionImpl) {
-      showToast("このブラウザは音声入力に対応していません。テキストで入力してください。");
-      return;
-    }
-
-    const recognition = new SpeechRecognitionImpl();
-    recognition.lang = "ja-JP";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    setMilestoneVoiceInput("");
-    setIsRecordingMilestoneVoice(true);
-
-    recognition.onresult = (event: any) => {
-      let full = "";
-      for (let i = 0; i < event.results.length; i++) {
-        full += event.results[i][0].transcript;
-      }
-      setMilestoneVoiceInput(full);
-    };
-
-    recognition.onerror = () => {
-      setIsRecordingMilestoneVoice(false);
-      showToast("音声入力でエラーが発生しました。テキストで入力してください。");
-    };
-
-    recognition.onend = () => {
-      setIsRecordingMilestoneVoice(false);
-    };
-
-    milestoneRecognitionRef.current = recognition;
-    recognition.start();
-  };
-
-  const handleStopMilestoneRecording = () => {
-    if (milestoneRecognitionRef.current) {
-      milestoneRecognitionRef.current.stop();
-      milestoneRecognitionRef.current = null;
-    }
-    setIsRecordingMilestoneVoice(false);
-  };
-
-  const handleMilestoneTextParse = async () => {
-    if (!milestoneVoiceInput.trim()) return;
-    setIsParsingMilestone(true);
-    try {
-      const childObj = children.find((c) => c.id === (selectedChildIds[0] || "c1"));
-      const childName = childObj ? childObj.name.split(" ")[0] : "こども";
-      const response = await fetch("/api/milestone-parse", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rawText: milestoneVoiceInput.trim(),
-          childName,
-        }),
-      });
-      const data = await response.json();
-      if (data.type) {
-        setNewMilestoneType(data.type);
-        setNewMilestoneTitle(data.title);
-        setNewMilestoneDesc(data.description);
-        setNewMilestoneDate(data.date || APP_TODAY);
-        if (data.type === "growth") {
-          setNewMilestoneHeight(data.height || "");
-          setNewMilestoneWeight(data.weight || "");
-        }
-        showToast("AIがテキストを解析してフォームに入力しました！✨");
-      }
-    } catch (e) {
-      console.error(e);
-      showToast("解析に失敗しました");
-    } finally {
-      setIsParsingMilestone(false);
-    }
-  };
-
-
   const handleUpdateDiary = (diaryId: string, newContent: string) => {
     setDiaries((prev) =>
       prev.map((d) => (d.id === diaryId ? { ...d, content: newContent } : d))
     );
     setEditingDiaryId(null);
-
-    // AI学習シミュレーション
-    const detectedWords: string[] = [];
-    const keywords = [
-      "しいの木公園", "歯医者", "おじいちゃん", "おばあちゃん", 
-      "おばさん", "おねえちゃん", "うわばき", "クレヨン", "レジャーシート", "しいの実保育園"
-    ];
-
-    keywords.forEach((word) => {
-      if (newContent.includes(word) && !learnedWords.includes(word)) {
-        detectedWords.push(word);
-      }
-    });
-
-    if (detectedWords.length > 0) {
-      setLearnedWords((prev) => [...prev, ...detectedWords]);
-      showToast(`AIが新しい言葉を学習しました：${detectedWords.join("、")} 💡`);
-    } else {
-      showToast("成長日記を更新しました");
-    }
+    showToast("成長日記を更新しました");
   };
 
-  const handleSaveMilestone = () => {
-    let finalTitle = newMilestoneTitle.trim();
-    let finalDesc = newMilestoneDesc.trim();
-
-    if (newMilestoneType === "growth") {
-      finalTitle = `身体測定`;
-      finalDesc = `身長: ${newMilestoneHeight || "--"}cm / 体重: ${newMilestoneWeight || "--"}kg`;
-    }
-
-    if (!finalTitle && newMilestoneType !== "growth") return;
-
-    const newMilestone: Milestone = {
-      id: createLocalId("milestone"),
-      childId: selectedChildIds.length > 0 ? selectedChildIds[0] : "c1",
-      date: newMilestoneDate,
-      type: newMilestoneType,
-      title: finalTitle,
-      description: finalDesc,
-    };
-
-    setMilestones((prev) => [newMilestone, ...prev]);
-    setIsAddingMilestone(false);
-    setNewMilestoneTitle("");
-    setNewMilestoneDesc("");
-    setNewMilestoneHeight("");
-    setNewMilestoneWeight("");
-    showToast("成長年表に記録を追加しました");
-  };
-
-  const handleDeleteMilestone = (milestoneId: string) => {
-    setMilestones((prev) => prev.filter((m) => m.id !== milestoneId));
-    showToast("年表から記録を削除しました");
-  };
 
   const resetScanForm = () => {
     setScannedImage(null);
@@ -830,12 +1083,14 @@ export default function App() {
     setTodoDrafts([]);
     setIsScanning(false);
     setScanErrorType(null);
+    setSuggestedTitle("");
+    setSuggestedCategory("");
     lastScanDataRef.current = null;
   };
 
   const updateTodoDraft = (
     draftId: string,
-    changes: Partial<Pick<TodoDraft, "task" | "dueDate" | "assignedTo">>
+    changes: Partial<Pick<TodoDraft, "task" | "dueDate" | "assignedTo" | "type" | "reminderAt">>
   ) => {
     setTodoDrafts((drafts) =>
       drafts.map((draft) =>
@@ -921,7 +1176,10 @@ export default function App() {
   const allTodos: Todo[] = [];
   filteredEntries.forEach((e) => e.todos?.forEach((t) => allTodos.push(t)));
 
-  const activeTodos = allTodos.filter((t) => !t.isCompleted);
+  // やることリスト用：完了済み・リスト非表示・予定（event）はカレンダー専用なので除外
+  const activeTodos = allTodos.filter(
+    (t) => !t.isCompleted && !t.hiddenFromList && t.type !== "event"
+  );
   const todayTodos = activeTodos.filter((t) => isToday(t.dueDate));
   const tomorrowTodos = activeTodos.filter((t) => isTomorrow(t.dueDate));
   const overdueTodos = activeTodos.filter((t) => isOverdue(t.dueDate));
@@ -944,31 +1202,6 @@ export default function App() {
 
   const activeChildId = selectedChildIds.length > 0 ? selectedChildIds[0] : "c1";
 
-  const timelineItems = (() => {
-    const childDiaries = diaries
-      .filter((d) => d.childId === activeChildId)
-      .map((d) => ({
-        id: d.id,
-        date: d.date,
-        type: "diary" as const,
-        title: "つぶやき日記",
-        description: d.content,
-      }));
-
-    const childMilestones = milestones
-      .filter((m) => m.childId === activeChildId)
-      .map((m) => ({
-        id: m.id,
-        date: m.date,
-        type: m.type,
-        title: m.title,
-        description: m.description,
-      }));
-
-    return [...childDiaries, ...childMilestones].sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
-  })();
 
   const calendarMonthDate = new Date(`${currentCalendarMonth}-01T00:00:00`);
   const calendarYear = calendarMonthDate.getFullYear();
@@ -981,8 +1214,12 @@ export default function App() {
     allTodos.filter((todo) => todo.dueDate === dateStr);
 
   const moveCalendarMonth = (delta: number) => {
-    const nextMonth = new Date(calendarYear, calendarMonthIndex + delta, 1);
-    setCurrentCalendarMonth(nextMonth.toISOString().slice(0, 7));
+    const y = calendarYear;
+    const m = calendarMonthIndex + delta;
+    const next = new Date(y, m, 1);
+    const yyyy = next.getFullYear();
+    const mm = String(next.getMonth() + 1).padStart(2, "0");
+    setCurrentCalendarMonth(`${yyyy}-${mm}`);
     setSelectedDay(null);
   };
 
@@ -1003,8 +1240,24 @@ export default function App() {
     );
   };
 
-  const renderEntryCard = (entry: Entry) => {
+  const renderEntryCard = (entry: Entry, entryList?: Entry[]) => {
     const currentMode = viewModes[entry.id] || "ocr";
+    const list = entryList ?? filteredEntries;
+    const idx = list.findIndex((e) => e.id === entry.id);
+    const prevEntry = idx > 0 ? list[idx - 1] : undefined;
+    const nextEntry = idx < list.length - 1 ? list[idx + 1] : undefined;
+
+    const navigateTo = (targetEntry: Entry) => {
+      markEntryRead(targetEntry.id);
+      setOpenEntryId(targetEntry.id);
+      setOpenEntryHighlight("");
+      setHighlightTodoId(null);
+      setTimeout(() => {
+        const el = entryRefs.current[targetEntry.id];
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
+    };
+
     return (
       <div
         key={entry.id}
@@ -1017,6 +1270,12 @@ export default function App() {
           isZoomed={zoomedImageId === entry.id}
           categories={categories}
           highlightTodoId={highlightTodoId || undefined}
+          forceExpand={openEntryId === entry.id}
+          highlightQuery={openEntryId === entry.id ? openEntryHighlight : ""}
+          onPrev={prevEntry ? () => navigateTo(prevEntry) : undefined}
+          onNext={nextEntry ? () => navigateTo(nextEntry) : undefined}
+          entryIndex={idx + 1}
+          entryTotal={list.length}
           onMarkRead={markEntryRead}
           onSetViewMode={(entryId, mode) =>
             setViewModes((prev) => ({ ...prev, [entryId]: mode }))
@@ -1052,17 +1311,275 @@ export default function App() {
           onClose={() => setToastMessage(null)}
         />
 
-        <PaywallModal
-          open={!!paywall}
-          title={paywall?.title || ""}
-          description={paywall?.description || ""}
-          onClose={() => setPaywall(null)}
-          onUpgrade={() => {
-            setCurrentPlan("premium");
-            setPaywall(null);
-            showToast("プレミアムプランにアップグレードしました");
-          }}
-        />
+        {/* 日記テキスト全画面入力モーダル */}
+        {showDiaryFullscreen && (
+          <div
+            className="fixed inset-0 z-50 bg-black/70 flex flex-col"
+            style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+          >
+            <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200">
+              <span className="text-sm font-bold text-slate-700">📝 メモを入力</span>
+              <button
+                type="button"
+                onClick={() => setShowDiaryFullscreen(false)}
+                className="p-1 text-slate-500 hover:text-slate-800"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="flex-1 bg-white flex flex-col p-4">
+              <textarea
+                autoFocus
+                value={newDiaryRaw}
+                onChange={(e) => setNewDiaryRaw(e.target.value)}
+                placeholder="今日あったことや成長記録をメモしてください..."
+                className="flex-1 w-full border border-slate-200 rounded-xl p-4 text-sm text-slate-800 bg-white outline-none focus:border-teal-500 resize-none"
+              />
+              <button
+                type="button"
+                onClick={() => setShowDiaryFullscreen(false)}
+                className="mt-3 w-full py-3 bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold rounded-xl transition"
+              >
+                完了
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* カレンダー全画面モーダル */}
+        {showCalendarFullscreen && (() => {
+          // 週ビュー用: selectedDay or todayの週の日曜〜土曜
+          const anchorDay = selectedDay || APP_TODAY;
+          const anchorDate = new Date(`${anchorDay}T00:00:00`);
+          const weekSunday = new Date(anchorDate);
+          weekSunday.setDate(anchorDate.getDate() - anchorDate.getDay());
+          const weekDays = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date(weekSunday);
+            d.setDate(weekSunday.getDate() + i);
+            return d.toLocaleDateString("sv-SE");
+          });
+          const moveWeek = (delta: number) => {
+            const d = new Date(`${anchorDay}T00:00:00`);
+            d.setDate(d.getDate() + delta * 7);
+            setSelectedDay(d.toLocaleDateString("sv-SE"));
+          };
+          const moveDay = (delta: number) => {
+            const d = new Date(`${anchorDay}T00:00:00`);
+            d.setDate(d.getDate() + delta);
+            setSelectedDay(d.toLocaleDateString("sv-SE"));
+          };
+
+          const viewLabel = calendarViewMode === "month" ? calendarLabel
+            : calendarViewMode === "week" ? `${Number(weekDays[0].slice(5,7))}/${Number(weekDays[0].slice(8,10))}〜${Number(weekDays[6].slice(5,7))}/${Number(weekDays[6].slice(8,10))}`
+            : `${Number(anchorDay.slice(5,7))}月${Number(anchorDay.slice(8,10))}日`;
+
+          return (
+          <div
+            className="fixed inset-0 z-50 bg-white flex flex-col"
+            style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+          >
+            {/* ヘッダー */}
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-white">
+              <button type="button" onClick={() =>
+                calendarViewMode === "month" ? moveCalendarMonth(-1) :
+                calendarViewMode === "week" ? moveWeek(-1) : moveDay(-1)
+              } className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold flex items-center justify-center text-sm">←</button>
+              <span className="flex-1 text-center text-sm font-bold text-slate-800">{viewLabel}</span>
+              <button type="button" onClick={() =>
+                calendarViewMode === "month" ? moveCalendarMonth(1) :
+                calendarViewMode === "week" ? moveWeek(1) : moveDay(1)
+              } className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold flex items-center justify-center text-sm">→</button>
+              <button type="button" onClick={() => setShowCalendarFullscreen(false)} className="text-slate-400 hover:text-slate-700 p-1 ml-1"><X size={20} /></button>
+            </div>
+
+            {/* ビュー切り替えタブ */}
+            <div className="flex bg-slate-100 mx-3 my-2 rounded-xl p-0.5 text-xs font-bold">
+              {(["month", "week", "day"] as const).map((v) => (
+                <button key={v} type="button" onClick={() => setCalendarViewMode(v)}
+                  className={`flex-1 py-1.5 rounded-lg transition ${calendarViewMode === v ? "bg-white text-teal-700 shadow" : "text-slate-400"}`}>
+                  {v === "month" ? "月" : v === "week" ? "週" : "日"}
+                </button>
+              ))}
+            </div>
+
+            {/* 月ビュー */}
+            {calendarViewMode === "month" && (
+              <div className="flex-1 overflow-hidden flex flex-col">
+                <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50 flex-shrink-0">
+                  {["日", "月", "火", "水", "木", "金", "土"].map((d, idx) => (
+                    <div key={d} className={`py-2 text-center text-xs font-bold ${idx === 0 ? "text-red-500" : idx === 6 ? "text-blue-500" : "text-slate-400"}`}>{d}</div>
+                  ))}
+                </div>
+                <div className={`overflow-y-auto transition-all ${selectedDay ? "flex-none" : "flex-1"}`} style={selectedDay ? { maxHeight: "42%" } : {}}>
+                  <div className="grid grid-cols-7 border-l border-t border-slate-100">
+                    {Array.from({ length: calendarStartWeekday }).map((_, i) => (
+                      <div key={`blank-${i}`} className="border-r border-b border-slate-100 min-h-[56px]" />
+                    ))}
+                    {Array.from({ length: calendarDaysInMonth }).map((_, i) => {
+                      const day = i + 1;
+                      const dateStr = `${currentCalendarMonth}-${String(day).padStart(2, "0")}`;
+                      const dayTodos = getTasksForDate(dateStr);
+                      const isSelected = selectedDay === dateStr;
+                      const isTodayDay = dateStr === APP_TODAY;
+                      const weekdayIdx = (calendarStartWeekday + i) % 7;
+                      return (
+                        <div key={dateStr} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
+                          className={`border-r border-b border-slate-100 min-h-[56px] p-1 cursor-pointer transition ${isSelected ? "bg-teal-50" : "hover:bg-slate-50"}`}>
+                          <div className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold mx-auto mb-1 ${
+                            isSelected ? "bg-teal-600 text-white" :
+                            isTodayDay ? "bg-teal-100 text-teal-800 ring-2 ring-teal-400" :
+                            weekdayIdx === 0 ? "text-red-500" : weekdayIdx === 6 ? "text-blue-500" : "text-slate-700"
+                          }`}>{day}</div>
+                          <div className="space-y-0.5">
+                            {dayTodos.slice(0, 2).map((todo) => (
+                              <div key={todo.id} className={`text-[9px] text-white rounded px-1 py-0.5 truncate leading-tight ${
+                                todo.type === "event" ? "bg-blue-500" : todo.type === "shopping" ? "bg-amber-500" : "bg-teal-600"
+                              }`}>{todo.task}</div>
+                            ))}
+                            {dayTodos.length > 2 && <div className="text-[9px] text-slate-400 text-center">+{dayTodos.length - 2}</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {selectedDay && (
+                  <div className="flex-1 overflow-y-auto border-t border-slate-200 bg-white">
+                    <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
+                      <span className="text-sm font-bold text-slate-700">{Number(selectedDay.slice(5,7))}月{Number(selectedDay.slice(8,10))}日</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setCalendarQuickAddDate(calendarQuickAddDate === selectedDay ? null : selectedDay)}
+                          className="text-teal-600 text-xs font-bold flex items-center gap-0.5 bg-teal-50 px-2 py-1 rounded-lg"
+                        >
+                          <Plus size={12} /> 追加
+                        </button>
+                        <button type="button" onClick={() => setSelectedDay(null)} className="text-slate-400 p-1"><X size={14} /></button>
+                      </div>
+                    </div>
+                    {calendarQuickAddDate === selectedDay && (
+                      <div className="px-3 pt-2 pb-1 border-b border-teal-100 bg-teal-50/60 space-y-2">
+                        <div className="flex gap-1">
+                          {(["todo","event","shopping"] as const).map((t) => (
+                            <button key={t} type="button" onClick={() => setCalendarQuickType(t)}
+                              className={`flex-1 py-1 rounded-lg text-[11px] font-bold ${calendarQuickType === t ? "bg-teal-600 text-white" : "bg-white text-slate-500 border border-slate-200"}`}>
+                              {t === "todo" ? "やること" : t === "event" ? "予定" : "買い物"}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={calendarQuickTask}
+                            onChange={(e) => setCalendarQuickTask(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && handleAddTodoFromCalendar()}
+                            placeholder="内容を入力…"
+                            className="flex-1 text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-teal-400 bg-white"
+                            autoFocus
+                          />
+                          <button type="button" onClick={handleAddTodoFromCalendar}
+                            disabled={!calendarQuickTask.trim()}
+                            className="px-3 py-1.5 bg-teal-600 text-white text-sm font-bold rounded-lg disabled:opacity-40">
+                            追加
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="p-3 space-y-2">
+                      {getTasksForDate(selectedDay).length > 0
+                        ? getTasksForDate(selectedDay).map((t) => renderTodoRow(t, "card"))
+                        : <p className="text-sm text-slate-400 text-center py-4">この日の予定はありません</p>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 週ビュー */}
+            {calendarViewMode === "week" && (
+              <div className="flex-1 overflow-y-auto">
+                <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50 sticky top-0">
+                  {weekDays.map((ds, idx) => {
+                    const wd = ["日","月","火","水","木","金","土"][idx];
+                    const isToday = ds === APP_TODAY;
+                    const isSel = ds === selectedDay;
+                    return (
+                      <div key={ds} onClick={() => setSelectedDay(ds)} className="py-2 text-center cursor-pointer">
+                        <div className={`text-[10px] font-bold ${idx===0?"text-red-500":idx===6?"text-blue-500":"text-slate-400"}`}>{wd}</div>
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold mx-auto mt-0.5 ${
+                          isSel ? "bg-teal-600 text-white" : isToday ? "bg-teal-100 text-teal-700 ring-2 ring-teal-400" : "text-slate-700"
+                        }`}>{Number(ds.slice(8,10))}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="p-3 space-y-1">
+                  {weekDays.map((ds) => {
+                    const todos = getTasksForDate(ds);
+                    if (!todos.length) return null;
+                    const wd = ["日","月","火","水","木","金","土"][new Date(`${ds}T00:00:00`).getDay()];
+                    return (
+                      <div key={ds}>
+                        <div className="text-xs font-bold text-slate-500 mt-3 mb-1">{Number(ds.slice(5,7))}月{Number(ds.slice(8,10))}日（{wd}）</div>
+                        <div className="space-y-1.5">
+                          {todos.map((t) => (
+                            <div key={t.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm border ${
+                              t.type === "event" ? "bg-blue-50 border-blue-100 text-blue-800" :
+                              t.type === "shopping" ? "bg-amber-50 border-amber-100 text-amber-800" :
+                              "bg-teal-50 border-teal-100 text-teal-800"
+                            }`}>
+                              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${t.type === "event" ? "bg-blue-500" : t.type === "shopping" ? "bg-amber-500" : "bg-teal-500"}`}></span>
+                              <span className="flex-1 font-medium">{t.task}</span>
+                              <span className="text-xs opacity-60">{t.type === "event" ? "予定" : t.type === "shopping" ? "買い物" : "やること"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {weekDays.every((ds) => !getTasksForDate(ds).length) && (
+                    <p className="text-sm text-slate-400 text-center py-8">この週の予定はありません</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 日ビュー */}
+            {calendarViewMode === "day" && (
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="text-sm font-bold text-slate-700 mb-3">
+                  {Number(anchorDay.slice(5,7))}月{Number(anchorDay.slice(8,10))}日（{["日","月","火","水","木","金","土"][new Date(`${anchorDay}T00:00:00`).getDay()]}）
+                </div>
+                {getTasksForDate(anchorDay).length > 0 ? (
+                  <div className="space-y-2">
+                    {getTasksForDate(anchorDay).map((t) => renderTodoRow(t, "card"))}
+                  </div>
+                ) : (
+                  <div className="text-center py-16 text-slate-400">
+                    <p className="text-lg mb-2">📅</p>
+                    <p className="text-sm">この日の予定はありません</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          );
+        })()}
+
+        {/* アラームバナー（非邪魔・小型） */}
+        {alarmNotice && (
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 font-medium">
+            <span className="flex-1 truncate">{alarmNotice}</span>
+            <button
+              type="button"
+              onClick={() => setAlarmNotice(null)}
+              className="flex-shrink-0 text-amber-500 hover:text-amber-700 p-0.5"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        )}
 
         {/* ヘッダー */}
         <header className="bg-white pb-3 px-4 border-b border-slate-100 flex items-center justify-between sticky top-0 z-40" style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}>
@@ -1096,103 +1613,163 @@ export default function App() {
             )}
           </div>
           <h2 className="text-sm font-bold text-teal-800 truncate max-w-[140px]">{kindergartenName}</h2>
-          <button onClick={() => setIsSettingsModalOpen(true)} className="text-slate-400 hover:text-teal-600 p-2">
-            <Settings size={20} />
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => { setSearchActive(true); setTimeout(() => searchInputRef.current?.focus(), 80); }}
+              className="text-slate-400 hover:text-teal-600 p-2"
+            >
+              <Search size={20} />
+            </button>
+            <button onClick={() => setIsSettingsModalOpen(true)} className="text-slate-400 hover:text-teal-600 p-2">
+              <Settings size={20} />
+            </button>
+          </div>
         </header>
+
+        {/* 検索オーバーレイ */}
+        {searchActive && (
+          <div className="absolute inset-0 bg-white z-40 flex flex-col" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+            {/* 検索ヘッダー */}
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-white flex-shrink-0" style={{ paddingTop: "max(10px, env(safe-area-inset-top))" }}>
+              <div className="flex-1 relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="やること・書類をキーワード検索..."
+                  className="w-full pl-8 pr-8 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-800 outline-none focus:border-teal-500"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setSearchActive(false)}
+                className="text-slate-500 text-sm font-bold px-2 py-1.5 flex-shrink-0"
+              >
+                閉じる
+              </button>
+            </div>
+            {/* 検索結果 */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-10">
+              {searchQuery.trim() ? (() => {
+                const READINGS2: Record<string, string> = {
+                  "誕生日": "たんじょうび", "誕生": "たんじょう",
+                  "持ち物": "もちもの", "提出": "ていしゅつ",
+                  "参観": "さんかん", "運動会": "うんどうかい",
+                  "発表会": "はっぴょうかい", "遠足": "えんそく",
+                  "健診": "けんしん", "検診": "けんしん",
+                  "予防接種": "よぼうせっしゅ", "水着": "みずぎ",
+                  "給食": "きゅうしょく", "弁当": "べんとう",
+                  "体操服": "たいそうふく", "上履き": "うわばき",
+                  "費用": "ひよう", "保護者": "ほごしゃ",
+                  "行事": "ぎょうじ", "連絡": "れんらく",
+                  "欠席": "けっせき", "遅刻": "ちこく",
+                  "送迎": "そうげい", "身体測定": "しんたいそくてい",
+                  "準備": "じゅんび", "購入": "こうにゅう",
+                  "写真": "しゃしん", "夏祭り": "なつまつり",
+                  "プール": "ぷーる", "予定": "よてい",
+                  "延長保育": "えんちょうほいく",
+                };
+                const toHira2 = (s: string) => s.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 96));
+                const normalize2 = (s: string) => { let r = toHira2(s.toLowerCase()); for (const [k, v] of Object.entries(READINGS2)) r = r.replaceAll(k, v); return r; };
+                const q2 = searchQuery.trim().toLowerCase();
+                const qn2 = normalize2(q2);
+                const hit2 = (text: string) => { const t = text.toLowerCase(); const tn = normalize2(t); return t.includes(q2) || tn.includes(qn2) || t.includes(qn2) || tn.includes(q2); };
+                const matchedTodos2 = allTodos.filter((t) => hit2(t.task));
+                const matchedEntries2 = filteredEntries.filter((e) => hit2(e.category) || hit2(e.ocrText || ""));
+                const hasResults2 = matchedTodos2.length > 0 || matchedEntries2.length > 0;
+                return (
+                  <>
+                    <p className="text-xs font-bold text-slate-400">
+                      「{searchQuery}」の検索結果
+                      {hasResults2 ? ` (やること ${matchedTodos2.length}件 / 書類 ${matchedEntries2.length}件)` : " — 見つかりませんでした"}
+                    </p>
+                    {matchedTodos2.map((t) => {
+                      const srcEntry = entries.find((e) => e.id === t.originalEntryId);
+                      return (
+                        <div key={t.id} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
+                          <p className="text-sm font-medium text-slate-800">{t.task}</p>
+                          <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
+                            <span>{t.dueDate ? `${Number(t.dueDate.slice(5,7))}/${Number(t.dueDate.slice(8,10))}` : "日付なし"}</span>
+                            {srcEntry && (
+                              <>
+                                <span>·</span>
+                                <button
+                                  type="button"
+                                  onClick={() => { setSearchActive(false); scrollToEntry(srcEntry.id, t.id); }}
+                                  className="text-teal-600 font-bold flex items-center gap-0.5"
+                                >
+                                  {srcEntry.category} ↩
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {matchedEntries2.map((e) => (
+                      <div key={e.id} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full">{e.category}</span>
+                          <span className="text-xs text-slate-400">{e.date}</span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1.5 line-clamp-2">{e.ocrText?.slice(0, 80)}...</p>
+                        <button
+                          type="button"
+                          onClick={() => { setSearchActive(false); scrollToEntry(e.id, undefined, { asOcr: true, highlightText: searchQuery }); }}
+                          className="mt-2 text-xs text-teal-600 font-bold"
+                        >
+                          書類を開く ↩
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                );
+              })() : (
+                <p className="text-sm text-slate-400 text-center pt-12">キーワードを入力してください</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ホーム */}
         {currentScreen === "home" && (
           <div className="flex-1 overflow-y-auto p-4 space-y-5 pb-28">
-            {/* 横断検索バー */}
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="やること・書類をキーワード検索..."
-                className="w-full pl-8 pr-8 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-800 outline-none focus:border-teal-500 shadow-sm"
-              />
-              {searchQuery && (
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">{(() => {
+                const d = new Date(APP_TODAY);
+                const weekday = ["日","月","火","水","木","金","土"][d.getDay()];
+                return `${d.getMonth()+1}月${d.getDate()}日（${weekday}）`;
+              })()}</h2>
+              {activeTodos.length > 0 ? (
                 <button
                   type="button"
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                  onClick={() => setShowTodayTodosExpanded((v) => !v)}
+                  className="text-sm text-teal-600 font-bold mt-0.5 flex items-center gap-1"
                 >
-                  <X size={14} />
+                  やること {activeTodos.length}件
+                  <ChevronDown size={14} className={`transition-transform ${showTodayTodosExpanded ? "rotate-180" : ""}`} />
                 </button>
+              ) : (
+                <p className="text-sm text-slate-500 mt-0.5">今日は提出・持ち物の予定はありません</p>
               )}
             </div>
 
-            {/* 検索結果 */}
-            {searchQuery.trim() && (() => {
-              const q = searchQuery.trim().toLowerCase();
-              const matchedTodos = allTodos.filter((t) =>
-                t.task.toLowerCase().includes(q)
-              );
-              const matchedEntries = filteredEntries.filter((e) =>
-                e.category.toLowerCase().includes(q) ||
-                (e.ocrText || "").toLowerCase().includes(q)
-              );
-              const hasResults = matchedTodos.length > 0 || matchedEntries.length > 0;
-              return (
-                <div className="space-y-3">
-                  <p className="text-xs font-bold text-slate-400">
-                    「{searchQuery}」の検索結果
-                    {hasResults ? ` (やること ${matchedTodos.length}件 / 書類 ${matchedEntries.length}件)` : " — 見つかりませんでした"}
-                  </p>
-                  {matchedTodos.map((t) => {
-                    const srcEntry = entries.find((e) => e.id === t.originalEntryId);
-                    return (
-                      <div key={t.id} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
-                        <p className="text-sm font-medium text-slate-800">{t.task}</p>
-                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
-                          <span>{t.dueDate ? `${Number(t.dueDate.slice(5,7))}/${Number(t.dueDate.slice(8,10))}` : "日付なし"}</span>
-                          {srcEntry && (
-                            <>
-                              <span>·</span>
-                              <button
-                                type="button"
-                                onClick={() => { setSearchQuery(""); scrollToEntry(srcEntry.id, t.id); }}
-                                className="text-teal-600 font-bold flex items-center gap-0.5"
-                              >
-                                {srcEntry.category} ↩
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {matchedEntries.map((e) => (
-                    <div key={e.id} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full">{e.category}</span>
-                        <span className="text-xs text-slate-400">{e.date}</span>
-                      </div>
-                      <p className="text-xs text-slate-500 mt-1.5 line-clamp-2">{e.ocrText?.slice(0, 80)}...</p>
-                      <button
-                        type="button"
-                        onClick={() => { setSearchQuery(""); scrollToEntry(e.id); }}
-                        className="mt-2 text-xs text-teal-600 font-bold"
-                      >
-                        書類を開く ↩
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
-
-            <div>
-              <h2 className="text-lg font-bold text-slate-800">6月15日（月）</h2>
-              <p className="text-sm text-slate-500 mt-0.5">
-                {activeTodos.length > 0
-                  ? `やること ${activeTodos.length}件`
-                  : "今日は提出・持ち物の予定はありません"}
-              </p>
-            </div>
+            {showTodayTodosExpanded && activeTodos.length > 0 && (
+              <div className="space-y-2">
+                {activeTodos.map((todo) => renderTodoRow(todo, "compact"))}
+              </div>
+            )}
 
             {tonightOneThing && (() => {
               const associatedEntry = entries.find((e) => e.id === tonightOneThing.originalEntryId);
@@ -1294,7 +1871,7 @@ export default function App() {
                 )}
               </div>
               {unreadEntries.length > 0 ? (
-                <div className="space-y-3">{unreadEntries.map(renderEntryCard)}</div>
+                <div className="space-y-3">{unreadEntries.map((e) => renderEntryCard(e))}</div>
               ) : entries.length > 0 ? (
                 <div className="bg-white border border-slate-100 rounded-xl p-4 text-sm text-slate-400 text-center">
                   新着はありません
@@ -1343,14 +1920,23 @@ export default function App() {
             {growthTab === "print" ? (
               <>
                 {activeTodos.length > 0 && (
-                  <div className="bg-amber-50/80 border-b border-amber-100 p-3 space-y-2">
-                    <div className="flex items-center gap-1 text-xs font-bold text-amber-700">
-                      <AlertCircle size={14} />
-                      <span>やること ({activeTodos.length}件)</span>
-                    </div>
-                    <div className="space-y-2 max-h-32 overflow-y-auto">
-                      {activeTodos.slice(0, 3).map((t) => renderTodoRow(t))}
-                    </div>
+                  <div className="bg-amber-50/80 border-b border-amber-100 px-3 py-2 space-y-2 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setRecordTodosExpanded((v) => !v)}
+                      className="w-full flex items-center justify-between text-xs font-bold text-amber-700"
+                    >
+                      <span className="flex items-center gap-1">
+                        <AlertCircle size={14} />
+                        やること {activeTodos.length}件
+                      </span>
+                      {recordTodosExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                    {recordTodosExpanded && (
+                      <div className="space-y-2 max-h-72 overflow-y-auto">
+                        {activeTodos.map((t) => renderTodoRow(t))}
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="bg-white border-b border-slate-100 px-3 py-2 flex items-center gap-2 overflow-x-auto scrollbar-none flex-shrink-0">
@@ -1375,9 +1961,12 @@ export default function App() {
                   ))}
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
-                  {filteredEntries
-                    .filter((e) => activeTab === "all" || e.category === activeTab)
-                    .map(renderEntryCard)}
+                  {(() => {
+                    const tabFiltered = filteredEntries.filter(
+                      (e) => activeTab === "all" || e.category === activeTab
+                    );
+                    return tabFiltered.map((e) => renderEntryCard(e, tabFiltered));
+                  })()}
                   {filteredEntries.length === 0 && (
                     <div className="text-center py-12 text-sm text-slate-400">
                       まだお帳面が登録されていません
@@ -1388,33 +1977,7 @@ export default function App() {
             ) : (
               /* 成長アルバム */
               <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
-                {/* 成長アルバム内サブ切り替えタブ */}
-                <div className="bg-slate-200/50 p-1 flex items-center gap-1 rounded-xl flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setAlbumSubTab("diary")}
-                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold text-center transition ${
-                      albumSubTab === "diary"
-                        ? "bg-white text-teal-700 shadow-sm"
-                        : "text-slate-500 hover:text-slate-700"
-                    }`}
-                  >
-                    📖 成長日記
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAlbumSubTab("timeline")}
-                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold text-center transition ${
-                      albumSubTab === "timeline"
-                        ? "bg-white text-teal-700 shadow-sm"
-                        : "text-slate-500 hover:text-slate-700"
-                    }`}
-                  >
-                    📈 成長年表
-                  </button>
-                </div>
-
-                {albumSubTab === "diary" && (
+                {true && (
                   <>
                     {/* 行事連動リマインダーバナー */}
                     {(() => {
@@ -1432,30 +1995,6 @@ export default function App() {
                       }
                       return null;
                     })()}
-
-                    {/* AI学習案内ガイド */}
-                    <details className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 cursor-pointer shadow-sm group">
-                  <summary className="font-bold flex justify-between items-center select-none text-slate-700">
-                    <span className="flex items-center gap-1">
-                      <span>💡</span> AI学習について（使うほど賢くなります）
-                    </span>
-                    <span className="text-[10px] text-teal-600 font-bold group-open:hidden">詳細 ▾</span>
-                    <span className="text-[10px] text-teal-600 font-bold hidden group-open:inline">閉じる ▴</span>
-                  </summary>
-                  <div className="mt-2 space-y-2 pt-2 border-t border-slate-200/60 text-slate-500 leading-relaxed cursor-default">
-                    <p>
-                      日記の自動整形後、文章を「編集（修正）」すると、AIがあなたの言い回しや登場人物・場所を自動で学習します。
-                    </p>
-                    <div className="flex gap-1.5 flex-wrap items-center mt-1">
-                      <span className="font-bold text-slate-700">学習済みの言葉:</span>
-                      {learnedWords.map((word) => (
-                        <span key={word} className="bg-white border border-slate-200 px-2 py-0.5 rounded-full text-[10px] font-bold text-teal-700">
-                          {word}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </details>
 
                 {/* 音声入力・AI整形シミュレーター */}
                 <div className="bg-gradient-to-r from-pink-500/10 to-teal-500/10 border border-teal-100/50 rounded-2xl p-4 shadow-sm space-y-3">
@@ -1501,10 +2040,11 @@ export default function App() {
                     <div className="space-y-3">
                       <textarea
                         value={newDiaryRaw}
-                        onChange={(e) => setNewDiaryRaw(e.target.value)}
+                        readOnly
+                        onClick={() => setShowDiaryFullscreen(true)}
                         placeholder="今日あったことや成長記録をメモしてください。🎤ボタンを押すとマイクで話しかけられます。"
                         rows={3}
-                        className="w-full border border-slate-200 rounded-xl p-3 text-xs text-slate-800 bg-white outline-none focus:border-teal-500"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-xs text-slate-800 bg-white outline-none focus:border-teal-500 cursor-pointer"
                       />
                       
                       {/* 3段階の肉付け選択 */}
@@ -1766,76 +2306,6 @@ export default function App() {
                 </>
                 )}
 
-                {/* 成長年表タブ */}
-                {albumSubTab === "timeline" && (
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                        {children.find((c) => c.id === activeChildId)?.name.split(" ")[0]}の成長年表
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingMilestone(true)}
-                        className="text-[10px] font-bold bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-full border border-teal-200 transition"
-                      >
-                        記録を追加 ＋
-                      </button>
-                    </div>
-
-                    {timelineItems.length === 0 ? (
-                      <div className="text-center py-12 bg-white rounded-2xl border border-slate-100 p-6 text-sm text-slate-400 shadow-sm">
-                        年表のデータがありません。「記録を追加」から登録してください。
-                      </div>
-                    ) : (
-                      <div className="relative border-l-2 border-slate-200 ml-3.5 pl-6 space-y-6 py-2">
-                        {timelineItems.map((item) => {
-                          const isDiary = item.type === "diary";
-                          const isGrowth = item.type === "growth";
-                          const isHealth = item.type === "health";
-
-                          let icon = "✨";
-                          let iconBg = "bg-pink-100 text-pink-700 border-pink-200";
-                          if (isDiary) {
-                            icon = "📖";
-                            iconBg = "bg-blue-100 text-blue-700 border-blue-200";
-                          } else if (isGrowth) {
-                            icon = "📈";
-                            iconBg = "bg-emerald-100 text-emerald-700 border-emerald-200";
-                          } else if (isHealth) {
-                            icon = "🏥";
-                            iconBg = "bg-amber-100 text-amber-700 border-amber-200";
-                          }
-
-                          return (
-                            <div key={item.id} className="relative space-y-1">
-                              {/* タイムラインの丸アイコン */}
-                              <span className={`absolute -left-[37px] top-0.5 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs shadow-sm ${iconBg}`}>
-                                {icon}
-                              </span>
-                              
-                              <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold">
-                                <span>{item.date}</span>
-                                {!isDiary && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteMilestone(item.id)}
-                                    className="text-slate-400 hover:text-red-500 font-normal"
-                                  >
-                                    削除 🗑️
-                                  </button>
-                                )}
-                              </div>
-                              <h4 className="text-xs font-bold text-slate-800">{item.title}</h4>
-                              <p className="text-xs text-slate-600 bg-white border border-slate-100 p-2.5 rounded-xl leading-relaxed shadow-sm">
-                                {item.description}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             )}
           </>
@@ -2019,7 +2489,10 @@ export default function App() {
                   return (
                     <div
                       key={dateStr}
-                      onClick={() => setSelectedDay(isDaySelected ? null : dateStr)}
+                      onClick={() => {
+                        setSelectedDay(dateStr);
+                        setShowCalendarFullscreen(true);
+                      }}
                       className={`rounded-lg py-1.5 flex flex-col items-center min-h-[44px] cursor-pointer transition ${
                         isDaySelected
                           ? "bg-teal-600 text-white shadow-md"
@@ -2057,10 +2530,47 @@ export default function App() {
                   <span className="text-sm font-bold text-teal-800">
                     {Number(selectedDay.slice(5, 7))}月{Number(selectedDay.slice(8, 10))}日
                   </span>
-                  <button onClick={() => setSelectedDay(null)} className="text-slate-400 p-1">
-                    <X size={16} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setCalendarQuickAddDate(calendarQuickAddDate === selectedDay ? null : selectedDay)}
+                      className="text-teal-600 text-xs font-bold flex items-center gap-0.5 bg-teal-100 px-2 py-1 rounded-lg"
+                    >
+                      <Plus size={12} /> 追加
+                    </button>
+                    <button type="button" onClick={() => setSelectedDay(null)} className="text-slate-400 p-1">
+                      <X size={16} />
+                    </button>
+                  </div>
                 </div>
+                {calendarQuickAddDate === selectedDay && (
+                  <div className="space-y-2 bg-white rounded-xl p-3 border border-teal-200">
+                    <div className="flex gap-1">
+                      {(["todo","event","shopping"] as const).map((t) => (
+                        <button key={t} type="button" onClick={() => setCalendarQuickType(t)}
+                          className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold ${calendarQuickType === t ? "bg-teal-600 text-white" : "bg-slate-50 text-slate-500 border border-slate-200"}`}>
+                          {t === "todo" ? "やること" : t === "event" ? "予定" : "買い物"}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={calendarQuickTask}
+                        onChange={(e) => setCalendarQuickTask(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleAddTodoFromCalendar()}
+                        placeholder="内容を入力…"
+                        className="flex-1 text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-teal-400"
+                        autoFocus
+                      />
+                      <button type="button" onClick={handleAddTodoFromCalendar}
+                        disabled={!calendarQuickTask.trim()}
+                        className="px-3 py-1.5 bg-teal-600 text-white text-sm font-bold rounded-lg disabled:opacity-40">
+                        追加
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {getTasksForDate(selectedDay).length > 0 ? (
                   getTasksForDate(selectedDay).map((t) => renderTodoRow(t, "card"))
                 ) : (
@@ -2070,32 +2580,30 @@ export default function App() {
             )}
 
             <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">時系列タスク一覧</span>
-                {currentPlan === "free" ? (
-                  <button
-                    onClick={() =>
-                      setPaywall({
-                        title: "Googleカレンダーと同期",
-                        description: "プレミアムプランなら、保育園の予定・提出期限を自動でGoogleカレンダーに同期できます。",
-                      })
-                    }
-                    className="text-xs font-bold text-teal-600 bg-teal-50 px-2.5 py-1.5 rounded-full border border-teal-200"
-                  >
-                    Google同期
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => showToast("Googleカレンダーと同期しました")}
-                    className="text-xs font-bold text-white bg-teal-600 px-2.5 py-1.5 rounded-full flex items-center gap-1"
-                  >
-                    同期中 <RefreshCw size={10} className="animate-spin" />
-                  </button>
-                )}
-              </div>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">時系列タスク一覧</span>
               <div className="space-y-2">
-                {allTodos.map((t) => renderTodoRow(t, "card"))}
+                {activeTodos.length === 0 && !showCalendarCompletedTodos && (
+                  <p className="text-sm text-slate-400 text-center py-4">未完了のタスクはありません</p>
+                )}
+                {activeTodos.map((t) => renderTodoRow(t, "card"))}
               </div>
+              {allTodos.filter((t) => t.isCompleted).length > 0 && (
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowCalendarCompletedTodos((v) => !v)}
+                    className="text-xs text-slate-400 font-bold flex items-center gap-1 hover:text-slate-600 transition"
+                  >
+                    <ChevronDown size={12} className={showCalendarCompletedTodos ? "rotate-180" : ""} />
+                    完了済み {allTodos.filter((t) => t.isCompleted).length}件
+                  </button>
+                  {showCalendarCompletedTodos && (
+                    <div className="space-y-2 mt-2">
+                      {allTodos.filter((t) => t.isCompleted).map((t) => renderTodoRow(t, "card"))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2248,129 +2756,105 @@ export default function App() {
         </nav>
 
 
-        {/* FAB */}
+        {/* FAB メニュー（ボトムシート） */}
         {showFabMenu && (
           <>
             <div
-              className="absolute inset-0 bg-black/15 z-20 cursor-default"
+              className="absolute inset-0 bg-black/30 z-20 cursor-default"
               onClick={() => setShowFabMenu(false)}
             />
-            <div className="absolute bottom-[5.5rem] right-5 flex flex-col items-end gap-2.5 z-30 animate-slide-up" style={{ bottom: "calc(5.5rem + env(safe-area-inset-bottom))" }}>
-              {/* 成長日記をつぶやく (AI Voice) */}
-              <div className="flex items-center gap-2">
-                <span className="bg-pink-600 text-white text-[10px] font-bold py-1 px-2.5 rounded-lg shadow-md flex items-center gap-1">
-                  成長日記をつぶやく 🎤 <Sparkles size={10} />
-                </span>
+            <div
+              className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl z-30 animate-slide-up px-5 pt-4"
+              style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}
+            >
+              <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto mb-5" />
+              <p className="text-xs font-bold text-slate-400 mb-3">追加する方法を選んでください</p>
+
+              {/* スキャン（統合・主要機能） */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFabMenu(false);
+                  if (entries.filter((e) => e.id !== "manual" && e.id !== "manual_shopping").length >= planLimits.maxEntries) {
+                    if (checkPremiumGate("書類の保存（11件目以降）")) return;
+                  }
+                  setCaptureDocs([]); setBatchProcessing(false); setBatchConfirmMode(false); setIsBatchOpen(true);
+                }}
+                className="w-full flex items-center gap-3 p-4 bg-gradient-to-r from-teal-600 to-emerald-500 rounded-2xl active:scale-95 transition mb-3 shadow-sm"
+              >
+                <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <Camera size={24} className="text-white" />
+                </div>
+                <div className="text-left">
+                  <p className="text-base font-bold text-white flex items-center gap-1">
+                    書類をスキャン <Sparkles size={13} className="text-teal-100" />
+                  </p>
+                  <p className="text-[11px] text-white/80 mt-0.5">何枚でも撮影OK・両面もまとめOK・AIが自動整理</p>
+                </div>
+              </button>
+
+              {/* その他の追加方法 */}
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                {/* メール・LINEコピペ */}
                 <button
-                  onClick={() => {
-                    setShowFabMenu(false);
-                    setIsAddingDiary(true);
-                  }}
-                  className="w-10 h-10 bg-gradient-to-tr from-pink-500 to-rose-400 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
+                  type="button"
+                  onClick={() => { setShowFabMenu(false); resetScanForm(); setScanMode("full"); setScanImportMethod("paste"); setIsScanModalOpen(true); }}
+                  className="flex flex-col items-center gap-2.5 p-4 bg-amber-50 border border-amber-100 rounded-2xl active:scale-95 transition text-center"
                 >
-                  <Mic size={16} />
+                  <div className="w-12 h-12 bg-amber-500 rounded-xl flex items-center justify-center shadow-sm">
+                    <span className="text-white text-xl">📋</span>
+                  </div>
+                  <span className="text-xs font-bold text-amber-800 leading-tight">メール・LINE<br/>コピペ</span>
+                </button>
+
+                {/* PDF・ファイル選択 */}
+                <button
+                  type="button"
+                  onClick={() => { setShowFabMenu(false); resetScanForm(); setScanMode("full"); setScanImportMethod("pdf"); setIsScanModalOpen(true); }}
+                  className="flex flex-col items-center gap-2.5 p-4 bg-indigo-50 border border-indigo-100 rounded-2xl active:scale-95 transition text-center"
+                >
+                  <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center shadow-sm">
+                    <FileText size={22} className="text-white" />
+                  </div>
+                  <span className="text-xs font-bold text-indigo-800 leading-tight">PDF・<br/>ファイル選択</span>
                 </button>
               </div>
 
-              {/* 成長の記録・マイルストーン */}
-              <div className="flex items-center gap-2">
-                <span className="bg-teal-700 text-white text-[10px] font-bold py-1 px-2.5 rounded-lg shadow-md flex items-center gap-1">
-                  できたこと・身体測定・健診 📈
-                </span>
-                <button
-                  onClick={() => {
-                    setShowFabMenu(false);
-                    setIsAddingMilestone(true);
-                  }}
-                  className="w-10 h-10 bg-gradient-to-tr from-teal-500 to-emerald-400 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
-                >
-                  <TrendingUp size={16} />
-                </button>
-              </div>
-
-              <div className="w-full h-[1px] bg-slate-200/50 my-1" />
-
-              {/* 手動入力 */}
-              <div className="flex items-center gap-2">
-                <span className="bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded-lg shadow-md">
-                  手動入力 ➕
-                </span>
-                <button
-                  onClick={() => {
-                    setShowFabMenu(false);
-                    setSelectedCategory("園だより");
-                    setOcrTextResult("### 手動入力\n予定・タスクを手動で登録します。");
-                    setTodoDrafts([
-                      {
-                        id: createLocalId("draft"),
-                        task: "",
-                        dueDate: APP_TODAY,
-                        assignedTo: "共通",
-                        type: "todo",
-                        reminderAt: "1day",
-                      },
-                    ]);
-                    setIsScanModalOpen(true);
-                  }}
-                  className="w-10 h-10 bg-white text-slate-700 hover:bg-slate-100 rounded-full flex items-center justify-center shadow-lg border border-slate-100 active:scale-95 transition"
-                >
+              {/* 手動入力（小） */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFabMenu(false);
+                  setScanMode("full");
+                  setSelectedCategory("園だより");
+                  setOcrTextResult("### 手動入力\n予定・タスクを手動で登録します。");
+                  setTodoDrafts([{ id: createLocalId("draft"), task: "", dueDate: APP_TODAY, assignedTo: "共通", type: "todo", reminderAt: "1day" }]);
+                  setIsScanModalOpen(true);
+                }}
+                className="w-full flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl active:scale-95 transition mb-3"
+              >
+                <div className="w-8 h-8 bg-slate-200 rounded-lg flex items-center justify-center flex-shrink-0">
                   <Plus size={16} className="text-teal-600" />
-                </button>
-              </div>
+                </div>
+                <span className="text-xs font-bold text-slate-600">手動入力</span>
+              </button>
 
-              {/* メール・LINEコピペ */}
-              <div className="flex items-center gap-2">
-                <span className="bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded-lg shadow-md">
-                  メール・LINEコピペ 📋
-                </span>
-                <button
-                  onClick={() => {
-                    setShowFabMenu(false);
-                    resetScanForm();
-                    setScanImportMethod("paste");
-                    setIsScanModalOpen(true);
-                  }}
-                  className="w-10 h-10 bg-amber-500 hover:bg-amber-600 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
-                >
-                  <Plus size={16} className="text-white" />
-                </button>
-              </div>
-
-              {/* PDF・ファイル読み込み */}
-              <div className="flex items-center gap-2">
-                <span className="bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded-lg shadow-md">
-                  PDF・ファイル選択 📄
-                </span>
-                <button
-                  onClick={() => {
-                    setShowFabMenu(false);
-                    resetScanForm();
-                    setScanImportMethod("pdf");
-                    setIsScanModalOpen(true);
-                  }}
-                  className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
-                >
-                  <FileText size={16} />
-                </button>
-              </div>
-
-              {/* プリントスキャン */}
-              <div className="flex items-center gap-2">
-                <span className="bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded-lg shadow-md">
-                  プリントスキャン 📸
-                </span>
-                <button
-                  onClick={() => {
-                    setShowFabMenu(false);
-                    resetScanForm();
-                    setScanImportMethod("camera");
-                    setIsScanModalOpen(true);
-                  }}
-                  className="w-10 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition"
-                >
-                  <Camera size={16} />
-                </button>
-              </div>
+              {/* 成長日記をつぶやく（横全幅） */}
+              <button
+                type="button"
+                onClick={() => { setShowFabMenu(false); setIsAddingDiary(true); }}
+                className="w-full flex items-center gap-3 p-4 bg-gradient-to-r from-pink-500 to-rose-400 rounded-2xl active:scale-95 transition"
+              >
+                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <Mic size={20} className="text-white" />
+                </div>
+                <div className="text-left">
+                  <p className="text-sm font-bold text-white flex items-center gap-1">
+                    成長日記をつぶやく <Sparkles size={11} className="text-pink-200" />
+                  </p>
+                  <p className="text-[10px] text-white/80 mt-0.5">AI音声で記録</p>
+                </div>
+              </button>
             </div>
           </>
         )}
@@ -2423,11 +2907,42 @@ export default function App() {
           onSubmit={handleSubmitEntry}
           scanErrorType={scanErrorType}
           onRetry={handleRetryScan}
+          mode={scanMode}
+          suggestedTitle={suggestedTitle}
+          suggestedCategory={suggestedCategory}
+          onQuickSave={handleQuickSave}
+        />
+        {/* 統合スキャンモーダル */}
+        <BatchScanModal
+          open={isBatchOpen}
+          childrenProfiles={children}
+          categories={categories}
+          targetChildIds={targetChildIds}
+          docs={captureDocs}
+          isProcessing={batchProcessing}
+          confirmMode={batchConfirmMode}
+          onToggleTargetChild={(childId) => {
+            if (targetChildIds.includes(childId)) {
+              if (targetChildIds.length > 1) {
+                setTargetChildIds(targetChildIds.filter((id) => id !== childId));
+              }
+            } else {
+              setTargetChildIds([...targetChildIds, childId]);
+            }
+          }}
+          onAddNewDoc={handleAddNewDoc}
+          onAddPageToDoc={handleAddPageToDoc}
+          onRemoveDoc={handleRemoveDoc}
+          onRemovePageFromDoc={handleRemovePageFromDoc}
+          onRotatePage={handleRotatePage}
+          onUpdateDocMeta={handleUpdateDocMeta}
+          onClose={() => setIsBatchOpen(false)}
+          onProcess={handleProcessDocs}
+          onCommitConfirmed={handleCommitConfirmed}
         />
         {/* 設定モーダル */}
         <SettingsModal
           open={isSettingsModalOpen}
-          currentPlan={currentPlan}
           childrenProfiles={children}
           categories={categories}
           members={members}
@@ -2439,17 +2954,12 @@ export default function App() {
           newChildName={newChildName}
           newChildAvatar={newChildAvatar}
           onClose={() => setIsSettingsModalOpen(false)}
-          onSetPlan={(plan) => {
-            setCurrentPlan(plan);
-            showToast(
-              plan === "premium"
-                ? "プレミアムプランにアップグレードしました"
-                : "フリープランに変更しました"
-            );
-          }}
           onRemoveChild={(childId) => setChildren(children.filter((child) => child.id !== childId))}
           onNewChildNameChange={setNewChildName}
           onNewChildAvatarChange={setNewChildAvatar}
+          onChangeChildAvatar={(childId, avatar) =>
+            setChildren((prev) => prev.map((c) => (c.id === childId ? { ...c, avatar } : c)))
+          }
           onAddNewChild={handleAddNewChild}
           onRemoveMember={(memberId) => setMembers(members.filter((m) => m.id !== memberId))}
           onNewMemberNameChange={setNewMemberName}
@@ -2470,200 +2980,22 @@ export default function App() {
             setIsSettingsModalOpen(false);
             showToast("初期設定に戻しました");
           }}
+          currentPlan={currentPlan}
+          onShowPremium={() => { setIsSettingsModalOpen(false); setShowPremiumModal(true); }}
         />
-        {/* マイルストーン追加モーダル */}
-        {isAddingMilestone && (
-          <div className="absolute inset-0 bg-black/50 flex items-end z-[60]">
-            <div className="bg-white w-full rounded-t-3xl p-5 space-y-4 animate-slide-up text-slate-800 max-h-[90%] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-              <div className="flex justify-between items-center">
-                <h3 className="font-bold text-slate-800 flex items-center gap-1.5">
-                  📈 成長記録・マイルストーンを追加
-                </h3>
-                <button type="button" onClick={() => setIsAddingMilestone(false)} className="text-slate-400 p-1">
-                  <X size={20} />
-                </button>
-              </div>
 
-              {/* AI音声・かんたん入力セクション */}
-              <div className="bg-gradient-to-r from-teal-500/10 to-emerald-500/10 border border-teal-100/50 rounded-2xl p-3 space-y-2.5">
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-bold text-teal-800 flex items-center gap-1">
-                    <Sparkles size={11} className="text-teal-600" /> 音声・テキストで一発入力 (AI解析)
-                  </span>
-                  {isRecordingMilestoneVoice && (
-                    <span className="text-[9px] text-red-500 font-bold animate-pulse flex items-center gap-0.5">
-                      🔴 音声入力中...
-                    </span>
-                  )}
-                </div>
-
-                {isRecordingMilestoneVoice ? (
-                  <div className="flex flex-col items-center py-2.5 space-y-2 bg-white/60 rounded-xl p-2.5 border border-white">
-                    <div className="flex items-center gap-1 justify-center h-6">
-                      {[1, 2, 3, 4, 5, 4, 3, 2, 1, 2, 3].map((val, idx) => (
-                        <span
-                          key={idx}
-                          style={{ height: `${val * 4}px` }}
-                          className="w-1 bg-teal-500 rounded-full animate-bounce"
-                        />
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-slate-600 text-center font-medium italic">
-                      「{milestoneVoiceInput || "お話ししてください..."}」
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleStopMilestoneRecording}
-                      className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-[10px] font-bold rounded-xl transition"
-                    >
-                      ⏹ 停止して確認
-                    </button>
-                  </div>
-                ) : isParsingMilestone ? (
-                  <div className="flex flex-col items-center py-4 space-y-1">
-                    <Loader2 className="animate-spin text-teal-600" size={18} />
-                    <p className="text-[10px] text-teal-700 font-bold">AIが測定数値やできたことを分析中...</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <textarea
-                      value={milestoneVoiceInput}
-                      onChange={(e) => setMilestoneVoiceInput(e.target.value)}
-                      placeholder="例：「1歳半健診で身長80センチ、体重10キロだったよ」「初めてタッチができた！」などとつぶやいてください。"
-                      rows={2}
-                      className="w-full border border-slate-200 rounded-xl p-2 text-[10px] text-slate-800 bg-white outline-none focus:border-teal-500"
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={handleStartMilestoneVoiceRecording}
-                        className="flex-1 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-[10px] font-bold flex items-center justify-center gap-1 shadow transition"
-                      >
-                        <Mic size={12} />
-                        <span>🎤 音声入力</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleMilestoneTextParse}
-                        disabled={!milestoneVoiceInput.trim()}
-                        className="px-3 py-2 rounded-xl bg-slate-800 text-white text-[10px] font-bold disabled:bg-slate-200 disabled:text-slate-400 transition"
-                      >
-                        AI自動入力
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 block mb-1">記録のタイプ</label>
-                  <div className="flex gap-2 text-xs">
-                    {(
-                      [
-                        { id: "milestone", label: "できたこと ✨" },
-                        { id: "growth", label: "身体測定 📈" },
-                        { id: "health", label: "健診・予防接種 🏥" },
-                      ] as const
-                    ).map((t) => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setNewMilestoneType(t.id)}
-                        className={`flex-1 py-1.5 rounded-lg font-bold text-center border transition ${
-                          newMilestoneType === t.id
-                            ? "bg-teal-50 border-teal-200 text-teal-700"
-                            : "bg-slate-50 border-slate-100 text-slate-400"
-                        }`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <label className="text-[10px] font-bold text-slate-400 block mb-1">日付</label>
-                    <input
-                      type="date"
-                      value={newMilestoneDate}
-                      onChange={(e) => setNewMilestoneDate(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white outline-none"
-                    />
-                  </div>
-                </div>
-
-                {newMilestoneType === "growth" ? (
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <label className="text-[10px] font-bold text-slate-400 block mb-1">身長 (cm)</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        placeholder="例: 75.5"
-                        value={newMilestoneHeight}
-                        onChange={(e) => setNewMilestoneHeight(e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white outline-none"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] font-bold text-slate-400 block mb-1">体重 (kg)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="例: 9.2"
-                        value={newMilestoneWeight}
-                        onChange={(e) => setNewMilestoneWeight(e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white outline-none"
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 block mb-1">タイトル</label>
-                      <input
-                        type="text"
-                        placeholder="例: 初めてつかまり立ちをした、日本脳炎1回目"
-                        value={newMilestoneTitle}
-                        onChange={(e) => setNewMilestoneTitle(e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 block mb-1">説明・メモ</label>
-                      <textarea
-                        placeholder="詳しい様子をメモしてください"
-                        value={newMilestoneDesc}
-                        onChange={(e) => setNewMilestoneDesc(e.target.value)}
-                        rows={3}
-                        className="w-full border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 bg-white resize-none outline-none"
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAddingMilestone(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-500 text-xs font-bold"
-                >
-                  キャンセル
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveMilestone}
-                  className="flex-1 py-2.5 rounded-xl bg-teal-600 text-white text-xs font-bold"
-                >
-                  追加する
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <PremiumModal
+          open={showPremiumModal}
+          currentPlan={currentPlan}
+          triggerFeature={premiumTrigger}
+          onClose={() => { setShowPremiumModal(false); setPremiumTrigger(undefined); }}
+          onUpgrade={() => {
+            // 本番では課金フローへ遷移。ベータ中は即時アンロック
+            setCurrentPlan("premium");
+            setShowPremiumModal(false);
+            showToast("プレミアムプランが有効になりました！（ベータ）");
+          }}
+        />
         {/* 音声AI日記追加モーダル */}
         {isAddingDiary && (
           <div className="absolute inset-0 bg-black/50 flex items-end z-[60]">
@@ -2738,10 +3070,11 @@ export default function App() {
                     <div className="space-y-3">
                       <textarea
                         value={newDiaryRaw}
-                        onChange={(e) => setNewDiaryRaw(e.target.value)}
+                        readOnly
+                        onClick={() => setShowDiaryFullscreen(true)}
                         placeholder="今日あったことや成長記録をメモしてください。🎤ボタンを押すとマイクで話しかけられます。"
                         rows={3}
-                        className="w-full border border-slate-200 rounded-xl p-3 text-xs text-slate-800 bg-white outline-none focus:border-teal-500"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-xs text-slate-800 bg-white outline-none focus:border-teal-500 cursor-pointer"
                       />
 
                       {/* 肉付け選択 */}

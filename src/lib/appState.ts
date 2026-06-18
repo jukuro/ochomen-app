@@ -1,4 +1,4 @@
-import type { Child, Entry, Plan } from "@/lib/types";
+import type { Child, Entry } from "@/lib/types";
 
 export const APP_STATE_STORAGE_KEY = "ochomen_app_state";
 
@@ -8,7 +8,6 @@ export interface AppState {
   kindergartenName: string;
   categories: string[];
   entries: Entry[];
-  currentPlan: Plan;
 }
 
 export interface AppStateStore {
@@ -21,10 +20,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isPlan(value: unknown): value is Plan {
-  return value === "free" || value === "premium";
-}
-
 function isValidAppState(value: unknown): value is AppState {
   if (!isRecord(value)) return false;
 
@@ -33,8 +28,7 @@ function isValidAppState(value: unknown): value is AppState {
     Array.isArray(value.children) &&
     typeof value.kindergartenName === "string" &&
     Array.isArray(value.categories) &&
-    Array.isArray(value.entries) &&
-    isPlan(value.currentPlan)
+    Array.isArray(value.entries)
   );
 }
 
@@ -51,7 +45,18 @@ export function loadLocalAppState(): AppState | null {
 }
 
 export function saveLocalAppState(state: AppState) {
-  localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state));
+  // base64 imageUrl は localStorage に保存しない（容量節約のため）
+  // 画像はセッション中のメモリ内または Supabase Storage で保持する
+  const serializable: AppState = {
+    ...state,
+    entries: state.entries.map((e) => {
+      if (!e.imageUrl || !e.imageUrl.startsWith("data:")) return e;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { imageUrl: _drop, ...rest } = e;
+      return rest as typeof e;
+    }),
+  };
+  localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(serializable));
 }
 
 export function clearLocalAppState() {

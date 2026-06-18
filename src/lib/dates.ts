@@ -1,5 +1,5 @@
-/** デモ用の基準日（モックデータと整合） */
-export const APP_TODAY = "2026-06-15";
+/** 実際の今日の日付 */
+export const APP_TODAY = new Date().toLocaleDateString("sv-SE");
 
 export function formatRelativeDate(dateStr: string, today = APP_TODAY): string {
   const todayDate = new Date(today);
