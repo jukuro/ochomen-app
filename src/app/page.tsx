@@ -214,6 +214,21 @@ export default function App() {
             if (localState.scanUsage) setScanUsage(localState.scanUsage);
             if (localState.plan) setCurrentPlan(localState.plan);
             if (localState.stripeCustomerId) setStripeCustomerId(localState.stripeCustomerId);
+
+            // プレミアムかつ customer_id がある場合、Stripe でサブスク状態を検証
+            if (localState.plan === "premium" && localState.stripeCustomerId) {
+              fetch(`/api/stripe/verify?customerId=${localState.stripeCustomerId}`)
+                .then((r) => r.json())
+                .then((d: { plan?: string }) => {
+                  if (d.plan === "free") {
+                    // 解約済み・支払い失敗 → ダウングレード
+                    setCurrentPlan("free");
+                    showToast("サブスクリプションが終了しました。無料プランに戻りました");
+                  }
+                  // d.plan === "unknown" の場合（Stripe 未設定 or エラー）は変更しない
+                })
+                .catch(() => {/* ネットワーク不在時は変更しない */});
+            }
           });
         }
       } catch {
@@ -226,13 +241,18 @@ export default function App() {
         if (params.get("upgraded") === "true") {
           const sessionId = params.get("session_id") ?? undefined;
           setCurrentPlan("premium");
-          if (sessionId) {
-            // Stripe Customer ID を後で取得するため session_id を保持
-            // ここでは簡易的に sessionId をキーとして使う
-          }
           showToast("🎉 プレミアムプランが有効になりました！");
-          // URL のクエリパラメータをクリーンアップ
           window.history.replaceState({}, "", window.location.pathname);
+
+          // セッションから customer_id を取得して保存
+          if (sessionId) {
+            fetch(`/api/stripe/session?sessionId=${sessionId}`)
+              .then((r) => r.json())
+              .then((d: { customerId?: string }) => {
+                if (d.customerId) setStripeCustomerId(d.customerId);
+              })
+              .catch(() => {/* 失敗しても致命的ではない */});
+          }
         } else if (params.get("upgrade_canceled") === "true") {
           showToast("アップグレードをキャンセルしました");
           window.history.replaceState({}, "", window.location.pathname);
@@ -3062,7 +3082,26 @@ export default function App() {
             showToast("初期設定に戻しました");
           }}
           currentPlan={currentPlan}
+          stripeCustomerId={stripeCustomerId}
           onShowPremium={() => { setIsSettingsModalOpen(false); setShowPremiumModal(true); }}
+          onManageSubscription={async () => {
+            if (!stripeCustomerId) return;
+            try {
+              const res = await fetch("/api/stripe/portal", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ customerId: stripeCustomerId }),
+              });
+              const data = await res.json() as { url?: string; error?: string };
+              if (data.url) {
+                window.location.href = data.url;
+              } else {
+                showToast("ポータルの表示に失敗しました: " + (data.error ?? "不明なエラー"));
+              }
+            } catch {
+              showToast("ネットワークエラーが発生しました");
+            }
+          }}
         />
 
         <PremiumModal

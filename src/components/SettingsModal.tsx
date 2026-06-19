@@ -43,7 +43,9 @@ interface SettingsModalProps {
   onAddNewCategory: () => void;
   onResetOnboarding: () => void;
   currentPlan?: "free" | "premium";
+  stripeCustomerId?: string;
   onShowPremium?: () => void;
+  onManageSubscription?: () => void;
 }
 
 export function SettingsModal({
@@ -76,7 +78,9 @@ export function SettingsModal({
   onAddNewCategory,
   onResetOnboarding,
   currentPlan = "free",
+  stripeCustomerId,
   onShowPremium,
+  onManageSubscription,
 }: SettingsModalProps) {
   const [avatarPickerFor, setAvatarPickerFor] = useState<string | null>(null);
 
@@ -175,6 +179,15 @@ export function SettingsModal({
               </button>
             )}
           </div>
+          {currentPlan === "premium" && stripeCustomerId && onManageSubscription && (
+            <button
+              type="button"
+              onClick={onManageSubscription}
+              className="mt-2 w-full py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"
+            >
+              💳 サブスクリプションを管理・解約
+            </button>
+          )}
         </div>
 
         {/* ── クラウド同期・アカウント ─────────────────────── */}
