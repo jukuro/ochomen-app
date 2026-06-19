@@ -51,6 +51,8 @@ export function BatchScanModal({
   const targetDocRef = useRef<string | null>(null);
   // 拡大プレビュー中のページ
   const [previewPage, setPreviewPage] = useState<{ docId: string; pageId: string } | null>(null);
+  // 書類の種類（スコープ）
+  const [docScope, setDocScope] = useState<"child" | "school" | "family" | "community">("school");
 
   if (!open) return null;
 
@@ -135,24 +137,65 @@ export function BatchScanModal({
           );
         })()}
 
-        {/* 対象メンバー */}
+        {/* 書類の種類 + 対象メンバー */}
         {!showConfirmList && (
-          <div>
-            <label className="text-xs font-bold text-slate-400 block mb-1.5">対象メンバー（全部に適用）</label>
-            <div className="flex gap-2 flex-wrap">
-              {childrenProfiles.map((child) => (
-                <button
-                  key={child.id}
-                  type="button"
-                  onClick={() => onToggleTargetChild(child.id)}
-                  className={`px-3 py-2 rounded-full text-xs font-bold ${
-                    targetChildIds.includes(child.id) ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-500"
-                  }`}
-                >
-                  {child.avatar} {child.name.split(" ")[0]}
-                </button>
-              ))}
+          <div className="space-y-3">
+            {/* 書類の種類（スコープ） */}
+            <div>
+              <label className="text-xs font-bold text-slate-400 block mb-1.5">書類の種類</label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[
+                  { key: "school",    label: "保育園・学校", icon: "🏫", desc: "給食・行事など" },
+                  { key: "child",     label: "お子さま",     icon: "👧", desc: "個人のおたより" },
+                  { key: "community", label: "地域",         icon: "📍", desc: "町内・自治会" },
+                  { key: "family",    label: "家族",         icon: "🏠", desc: "家族の予定" },
+                ].map(({ key, label, icon, desc }) => {
+                  const isSelected = docScope === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setDocScope(key as any)}
+                      className={`flex flex-col items-center py-2 px-1 rounded-xl border text-center transition ${
+                        isSelected
+                          ? "bg-teal-600 border-teal-600 text-white"
+                          : "bg-slate-50 border-slate-200 text-slate-500"
+                      }`}
+                    >
+                      <span className="text-lg">{icon}</span>
+                      <span className="text-[10px] font-bold mt-0.5">{label}</span>
+                      <span className={`text-[9px] mt-0.5 ${isSelected ? "text-teal-100" : "text-slate-400"}`}>{desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            {/* 対象のお子さま（「お子さま」or「保育園・学校」選択時に表示） */}
+            {(docScope === "child" || docScope === "school") && childrenProfiles.length > 0 && (
+              <div>
+                <label className="text-xs font-bold text-slate-400 block mb-1.5">
+                  {docScope === "school" ? "対象の保育園・学校" : "対象のお子さま"}
+                </label>
+                <div className="flex gap-2 flex-wrap">
+                  {childrenProfiles.map((child) => (
+                    <button
+                      key={child.id}
+                      type="button"
+                      onClick={() => onToggleTargetChild(child.id)}
+                      className={`px-3 py-2 rounded-full text-xs font-bold transition ${
+                        targetChildIds.includes(child.id) ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {child.avatar} {child.name.split(" ")[0]}
+                    </button>
+                  ))}
+                  {docScope === "school" && (
+                    <p className="text-[10px] text-slate-400 w-full">※ 選ばない場合は全員に適用されます</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

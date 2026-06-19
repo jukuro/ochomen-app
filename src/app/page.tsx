@@ -167,7 +167,8 @@ export default function App() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [detailTodo, setDetailTodo] = useState<import("@/lib/types").Todo | null>(null);
-  const [calendarScopeFilter, setCalendarScopeFilter] = useState<"all" | "child" | "school" | "family" | "community">("all");
+  // "all" | "school" | "family" | "community" | childId（例: "c1"）
+  const [calendarScopeFilter, setCalendarScopeFilter] = useState<string>("all");
   const [currentPlan, setCurrentPlan] = useState<PlanId>("free");
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [premiumTrigger, setPremiumTrigger] = useState<string | undefined>(undefined);
@@ -1313,20 +1314,25 @@ export default function App() {
   const getTasksForDate = (dateStr: string) =>
     allTodos.filter((todo) => todo.dueDate === dateStr);
 
-  /** カレンダー用スコープフィルター */
+  /** カレンダー用スコープ・子供フィルター */
   const filterByScope = (todos: Todo[]) => {
     if (calendarScopeFilter === "all") return todos;
+    // 子供 ID でのフィルター
+    const isChildId = children.some((c) => c.id === calendarScopeFilter);
+    if (isChildId) {
+      return todos.filter((t) => {
+        const entry = entries.find((e) => e.id === t.originalEntryId);
+        return entry?.childIds.includes(calendarScopeFilter) ?? false;
+      });
+    }
     return todos.filter((t) => {
       const scope = t.scope;
-      // scope が明示的に設定されている場合はそれを使用
       if (scope) return scope === calendarScopeFilter;
-      // 未設定の場合はエントリのカテゴリで判別
       const entry = entries.find((e) => e.id === t.originalEntryId);
       const cat = entry?.category ?? "";
       if (calendarScopeFilter === "school") return /園|保育|幼稚|だより/.test(cat);
       if (calendarScopeFilter === "community") return /地域|行事|町内|自治/.test(cat);
       if (calendarScopeFilter === "family") return /家族|家庭|兄弟/.test(cat);
-      // child: スコープ未設定・カテゴリも該当なし → 子供のデフォルト
       return true;
     });
   };
@@ -2548,17 +2554,15 @@ export default function App() {
         {/* カレンダー */}
         {currentScreen === "calendar" && (
           <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
-            {/* スコープフィルター */}
+            {/* スコープ・子供フィルター */}
             <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
-              {(
-                [
-                  { key: "all",       label: "すべて",   icon: "📋" },
-                  { key: "child",     label: "子供",     icon: "👧" },
-                  { key: "school",    label: "保育園",   icon: "🏫" },
-                  { key: "family",    label: "家族",     icon: "🏠" },
-                  { key: "community", label: "地域",     icon: "📍" },
-                ] as const
-              ).map(({ key, label, icon }) => (
+              {/* 固定フィルター */}
+              {[
+                { key: "all",       label: "すべて", icon: "📋" },
+                { key: "school",    label: "保育園", icon: "🏫" },
+                { key: "family",    label: "家族",   icon: "🏠" },
+                { key: "community", label: "地域",   icon: "📍" },
+              ].map(({ key, label, icon }) => (
                 <button
                   key={key}
                   type="button"
@@ -2570,6 +2574,21 @@ export default function App() {
                   }`}
                 >
                   {icon} {label}
+                </button>
+              ))}
+              {/* 子供ごとのフィルター */}
+              {children.filter((c) => selectedChildIds.includes(c.id)).map((child) => (
+                <button
+                  key={child.id}
+                  type="button"
+                  onClick={() => setCalendarScopeFilter(child.id)}
+                  className={`flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold border transition ${
+                    calendarScopeFilter === child.id
+                      ? `text-white border-transparent shadow-sm ${child.color}`
+                      : "bg-white text-slate-500 border-slate-200"
+                  }`}
+                >
+                  {child.avatar} {child.name}
                 </button>
               ))}
             </div>
@@ -3182,7 +3201,10 @@ export default function App() {
           members={members}
           onClose={() => setDetailTodo(null)}
           onToggleComplete={(id) => { toggleTodoComplete(id); }}
-          onOpenSource={(entryId) => { scrollToEntry(entryId); setDetailTodo(null); }}
+          onOpenSource={(entryId, highlight) => {
+            scrollToEntry(entryId, undefined, { asOcr: true, highlightText: highlight });
+            setDetailTodo(null);
+          }}
           onUpdateTodo={(id, fields) => { handleUpdateTodo(id, fields); setDetailTodo(null); }}
           onDeleteTodo={(id) => { handleDeleteTodo(id); setDetailTodo(null); }}
         />
