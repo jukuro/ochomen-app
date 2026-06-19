@@ -45,6 +45,7 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { TodoRow } from "@/components/TodoRow";
 import { Toast } from "@/components/Toast";
 import { PremiumModal, PLAN_LIMITS, type PlanId } from "@/components/PremiumModal";
+import { TodoDetailSheet } from "@/components/TodoDetailSheet";
 import {
   isSupabaseConfigured,
   supabase,
@@ -165,6 +166,8 @@ export default function App() {
   const [newChildAvatar, setNewChildAvatar] = useState("👦");
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [detailTodo, setDetailTodo] = useState<import("@/lib/types").Todo | null>(null);
+  const [calendarScopeFilter, setCalendarScopeFilter] = useState<"all" | "child" | "school" | "family" | "community">("all");
   const [currentPlan, setCurrentPlan] = useState<PlanId>("free");
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [premiumTrigger, setPremiumTrigger] = useState<string | undefined>(undefined);
@@ -1310,6 +1313,24 @@ export default function App() {
   const getTasksForDate = (dateStr: string) =>
     allTodos.filter((todo) => todo.dueDate === dateStr);
 
+  /** カレンダー用スコープフィルター */
+  const filterByScope = (todos: Todo[]) => {
+    if (calendarScopeFilter === "all") return todos;
+    return todos.filter((t) => {
+      const scope = t.scope;
+      // scope が明示的に設定されている場合はそれを使用
+      if (scope) return scope === calendarScopeFilter;
+      // 未設定の場合はエントリのカテゴリで判別
+      const entry = entries.find((e) => e.id === t.originalEntryId);
+      const cat = entry?.category ?? "";
+      if (calendarScopeFilter === "school") return /園|保育|幼稚|だより/.test(cat);
+      if (calendarScopeFilter === "community") return /地域|行事|町内|自治/.test(cat);
+      if (calendarScopeFilter === "family") return /家族|家庭|兄弟/.test(cat);
+      // child: スコープ未設定・カテゴリも該当なし → 子供のデフォルト
+      return true;
+    });
+  };
+
   const moveCalendarMonth = (delta: number) => {
     const y = calendarYear;
     const m = calendarMonthIndex + delta;
@@ -1333,6 +1354,7 @@ export default function App() {
         onOpenSource={scrollToEntry}
         onUpdateTodo={handleUpdateTodo}
         onDeleteTodo={handleDeleteTodo}
+        onShowDetail={setDetailTodo}
       />
     );
   };
@@ -1584,8 +1606,8 @@ export default function App() {
                       </div>
                     )}
                     <div className="p-3 space-y-2">
-                      {getTasksForDate(selectedDay).length > 0
-                        ? getTasksForDate(selectedDay).map((t) => renderTodoRow(t, "card"))
+                      {filterByScope(getTasksForDate(selectedDay)).length > 0
+                        ? filterByScope(getTasksForDate(selectedDay)).map((t) => renderTodoRow(t, "card"))
                         : <p className="text-sm text-slate-400 text-center py-4">この日の予定はありません</p>}
                     </div>
                   </div>
@@ -2526,6 +2548,32 @@ export default function App() {
         {/* カレンダー */}
         {currentScreen === "calendar" && (
           <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
+            {/* スコープフィルター */}
+            <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+              {(
+                [
+                  { key: "all",       label: "すべて",   icon: "📋" },
+                  { key: "child",     label: "子供",     icon: "👧" },
+                  { key: "school",    label: "保育園",   icon: "🏫" },
+                  { key: "family",    label: "家族",     icon: "🏠" },
+                  { key: "community", label: "地域",     icon: "📍" },
+                ] as const
+              ).map(({ key, label, icon }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setCalendarScopeFilter(key)}
+                  className={`flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold border transition ${
+                    calendarScopeFilter === key
+                      ? "bg-teal-600 text-white border-teal-600 shadow-sm"
+                      : "bg-white text-slate-500 border-slate-200"
+                  }`}
+                >
+                  {icon} {label}
+                </button>
+              ))}
+            </div>
+
             <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm space-y-3">
               <div className="flex items-center justify-between">
                 <button
@@ -2668,8 +2716,8 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                {getTasksForDate(selectedDay).length > 0 ? (
-                  getTasksForDate(selectedDay).map((t) => renderTodoRow(t, "card"))
+                {filterByScope(getTasksForDate(selectedDay)).length > 0 ? (
+                  filterByScope(getTasksForDate(selectedDay)).map((t) => renderTodoRow(t, "card"))
                 ) : (
                   <p className="text-sm text-slate-400 text-center py-2">この日の予定はありません</p>
                 )}
@@ -2679,12 +2727,12 @@ export default function App() {
             <div className="space-y-2">
               <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">時系列タスク一覧</span>
               <div className="space-y-2">
-                {activeTodos.length === 0 && !showCalendarCompletedTodos && (
+                {filterByScope(activeTodos).length === 0 && !showCalendarCompletedTodos && (
                   <p className="text-sm text-slate-400 text-center py-4">未完了のタスクはありません</p>
                 )}
-                {activeTodos.map((t) => renderTodoRow(t, "card"))}
+                {filterByScope(activeTodos).map((t) => renderTodoRow(t, "card"))}
               </div>
-              {allTodos.filter((t) => t.isCompleted).length > 0 && (
+              {filterByScope(allTodos.filter((t) => t.isCompleted)).length > 0 && (
                 <div className="pt-1">
                   <button
                     type="button"
@@ -2692,11 +2740,11 @@ export default function App() {
                     className="text-xs text-slate-400 font-bold flex items-center gap-1 hover:text-slate-600 transition"
                   >
                     <ChevronDown size={12} className={showCalendarCompletedTodos ? "rotate-180" : ""} />
-                    完了済み {allTodos.filter((t) => t.isCompleted).length}件
+                    完了済み {filterByScope(allTodos.filter((t) => t.isCompleted)).length}件
                   </button>
                   {showCalendarCompletedTodos && (
                     <div className="space-y-2 mt-2">
-                      {allTodos.filter((t) => t.isCompleted).map((t) => renderTodoRow(t, "card"))}
+                      {filterByScope(allTodos.filter((t) => t.isCompleted)).map((t) => renderTodoRow(t, "card"))}
                     </div>
                   )}
                 </div>
@@ -3125,6 +3173,20 @@ export default function App() {
             showToast("🎉 プレミアムプランが有効になりました！");
           }}
         />
+
+        {/* Todo 詳細ドロワー */}
+        <TodoDetailSheet
+          todo={detailTodo}
+          entries={entries}
+          childProfiles={children}
+          members={members}
+          onClose={() => setDetailTodo(null)}
+          onToggleComplete={(id) => { toggleTodoComplete(id); }}
+          onOpenSource={(entryId) => { scrollToEntry(entryId); setDetailTodo(null); }}
+          onUpdateTodo={(id, fields) => { handleUpdateTodo(id, fields); setDetailTodo(null); }}
+          onDeleteTodo={(id) => { handleDeleteTodo(id); setDetailTodo(null); }}
+        />
+
         {/* 音声AI日記追加モーダル */}
         {isAddingDiary && (
           <div className="absolute inset-0 bg-black/50 flex items-end z-[60]">

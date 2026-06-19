@@ -16,6 +16,7 @@ interface TodoRowProps {
   onOpenSource: (entryId: string) => void;
   onUpdateTodo: (todoId: string, updatedFields: Partial<Todo>) => void;
   onDeleteTodo: (todoId: string) => void;
+  onShowDetail?: (todo: Todo) => void;
 }
 
 export function TodoRow({
@@ -28,6 +29,7 @@ export function TodoRow({
   onOpenSource,
   onUpdateTodo,
   onDeleteTodo,
+  onShowDetail,
 }: TodoRowProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [swipeX, setSwipeX] = useState(0);
@@ -275,7 +277,12 @@ export function TodoRow({
           onChange={() => onToggleComplete(todo.id)}
           className="accent-teal-600 w-5 h-5 flex-shrink-0"
         />
-        <div className="min-w-0">
+        {/* タイトル部分タップで詳細表示 */}
+        <div
+          className="min-w-0 flex-1"
+          onClick={() => onShowDetail?.(todo)}
+          role={onShowDetail ? "button" : undefined}
+        >
           <div className="flex items-center gap-1.5">
             <p className={`truncate text-slate-700 font-semibold text-base leading-snug ${todo.isCompleted ? "line-through text-slate-400" : ""}`}>
               {todo.task}

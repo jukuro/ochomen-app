@@ -1,3 +1,5 @@
+export type TodoScope = "child" | "school" | "family" | "community";
+
 export interface Todo {
   id: string;
   task: string;
@@ -7,6 +9,11 @@ export interface Todo {
   originalEntryId: string;
   type?: "todo" | "shopping" | "event";
   reminderAt?: "none" | "today" | "1day" | "3day";
+  /**
+   * イベントの対象スコープ
+   * child=子供 / school=保育園 / family=家族 / community=地域
+   */
+  scope?: TodoScope;
   /** AIがこの日付・タスクを設定した理由 */
   reason?: string;
   /** やることリストから非表示（カレンダーには残す）。行事の不要分など */
