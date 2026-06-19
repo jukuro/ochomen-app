@@ -179,7 +179,7 @@ export function SettingsModal({
               </button>
             )}
           </div>
-          {currentPlan === "premium" && stripeCustomerId && onManageSubscription && (
+          {currentPlan === "premium" && onManageSubscription && (
             <button
               type="button"
               onClick={onManageSubscription}

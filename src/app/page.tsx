@@ -248,10 +248,14 @@ export default function App() {
           if (sessionId) {
             fetch(`/api/stripe/session?sessionId=${sessionId}`)
               .then((r) => r.json())
-              .then((d: { customerId?: string }) => {
-                if (d.customerId) setStripeCustomerId(d.customerId);
+              .then((d: { customerId?: string; error?: string }) => {
+                if (d.customerId) {
+                  setStripeCustomerId(d.customerId);
+                } else {
+                  console.warn("Stripe session: customer_id not found", d);
+                }
               })
-              .catch(() => {/* 失敗しても致命的ではない */});
+              .catch((e) => console.warn("Stripe session fetch error:", e));
           }
         } else if (params.get("upgrade_canceled") === "true") {
           showToast("アップグレードをキャンセルしました");
@@ -3085,7 +3089,11 @@ export default function App() {
           stripeCustomerId={stripeCustomerId}
           onShowPremium={() => { setIsSettingsModalOpen(false); setShowPremiumModal(true); }}
           onManageSubscription={async () => {
-            if (!stripeCustomerId) return;
+            // customer_id が未取得の場合は Stripe ダッシュボードで直接確認するよう案内
+            if (!stripeCustomerId) {
+              showToast("Stripeポータルへの接続情報が見つかりません。stripe.com にログインして管理してください");
+              return;
+            }
             try {
               const res = await fetch("/api/stripe/portal", {
                 method: "POST",
