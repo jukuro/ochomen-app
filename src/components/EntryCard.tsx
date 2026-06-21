@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import Image from "next/image";
 import { FileText, Image as ImageIcon, Edit, Trash2, RefreshCw, X, ZoomIn, ChevronDown, ChevronUp, CalendarDays, ShoppingBag, ClipboardList, Bell, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import type { Child, Entry, EntrySection } from "@/lib/types";
 import { formatRelativeDate, formatShortDate } from "@/lib/dates";
@@ -38,40 +37,142 @@ function normalizeStr(s: string) {
 }
 
 // テキスト内のマッチ範囲を返す（位置ズレしない2パス方式）
-function findMatchRanges(text: string, highlightQuery: string): Array<{start: number; end: number}> {
-  if (!highlightQuery) return [];
-  const origQ = highlightQuery.toLowerCase();
-  const normQ = normalizeStr(highlightQuery);
-  // テキストはカタカナ→ひらがな変換のみ（長さ保持）。漢字→かな変換はしない
-  const textKana = toHira(text.toLowerCase());
-  const textLower = text.toLowerCase();
-  const ranges: Array<{start: number; end: number}> = [];
-
-  // パス1: 正規化クエリ × カタカナ正規化テキスト（ひらがな・カタカナ検索）
-  if (normQ.length > 0) {
-    let idx = 0;
-    while (idx <= textKana.length - normQ.length) {
-      const found = textKana.indexOf(normQ, idx);
-      if (found === -1) break;
-      ranges.push({ start: found, end: found + normQ.length });
-      idx = found + normQ.length;
+/** 重複する範囲をマージする */
+function mergeRanges(ranges: Array<{start: number; end: number}>): Array<{start: number; end: number}> {
+  if (ranges.length === 0) return [];
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
+  const merged: Array<{start: number; end: number}> = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = merged[merged.length - 1];
+    if (sorted[i].start <= prev.end + 1) {
+      prev.end = Math.max(prev.end, sorted[i].end);
+    } else {
+      merged.push({ ...sorted[i] });
     }
   }
+  return merged;
+}
 
-  // パス2: 元のクエリ（小文字）× 元のテキスト（漢字直接マッチ）
-  if (origQ.length > 0 && origQ !== normQ) {
-    let idx = 0;
-    while (idx <= textLower.length - origQ.length) {
-      const found = textLower.indexOf(origQ, idx);
+/** ===== 完全一致検索（かな正規化込み） ===== */
+function findExactRanges(text: string, query: string): Array<{start: number; end: number}> {
+  if (!query || query.length < 2) return [];
+  const normQ = normalizeStr(toHira(query.toLowerCase()));
+  const origQ = query.toLowerCase();
+  const normText = normalizeStr(toHira(text.toLowerCase()));
+  const origText = text.toLowerCase();
+  const ranges: Array<{start: number; end: number}> = [];
+
+  let idx = 0;
+  while (idx <= normText.length - normQ.length) {
+    const found = normText.indexOf(normQ, idx);
+    if (found === -1) break;
+    ranges.push({ start: found, end: found + normQ.length });
+    idx = found + normQ.length;
+  }
+  if (origQ !== normQ) {
+    idx = 0;
+    while (idx <= origText.length - origQ.length) {
+      const found = origText.indexOf(origQ, idx);
       if (found === -1) break;
-      // パス1で既にカバーされていない位置のみ追加
-      const covered = ranges.some((r) => r.start <= found && found < r.end);
-      if (!covered) ranges.push({ start: found, end: found + origQ.length });
+      const dup = ranges.some((r) => r.start <= found && found < r.end);
+      if (!dup) ranges.push({ start: found, end: found + origQ.length });
       idx = found + origQ.length;
     }
   }
+  return ranges;
+}
 
-  return ranges.sort((a, b) => a.start - b.start);
+/**
+ * ===== バイグラム曖昧検索 =====
+ * クエリを 2 文字 N-gram に分解し、テキスト上でスライディングウィンドウを走らせて
+ * 重複率が threshold 以上の領域を強調候補とする。
+ * AIが書き換えたタスク名とOCRテキストが語順や表記が異なっても対応できる。
+ */
+function findFuzzyRanges(text: string, query: string, threshold = 0.45): Array<{start: number; end: number}> {
+  const normText = normalizeStr(toHira(text.toLowerCase()));
+  const normQuery = normalizeStr(toHira(query.toLowerCase()));
+  if (normQuery.length < 3) return [];
+
+  // クエリのユニークバイグラムを構築
+  const qBigrams: string[] = [];
+  for (let i = 0; i < normQuery.length - 1; i++) {
+    qBigrams.push(normQuery.slice(i, i + 2));
+  }
+  const uniqueQB = [...new Set(qBigrams)];
+  if (uniqueQB.length < 2) return [];
+
+  // 最低マッチ数（短いクエリほど厳しく）
+  const requiredMatches = Math.max(2, Math.ceil(uniqueQB.length * threshold));
+
+  // 窓サイズはクエリ長の 1.3〜2.0 倍（OCRゆれを吸収）
+  const winLen = Math.max(normQuery.length + 4, Math.ceil(normQuery.length * 1.5));
+
+  const hits: Array<{start: number; end: number; score: number}> = [];
+
+  for (let i = 0; i <= normText.length - Math.floor(normQuery.length * 0.5); i++) {
+    const winEnd = Math.min(i + winLen, normText.length);
+    const win = normText.slice(i, winEnd);
+    let matchCount = 0;
+    for (const bg of uniqueQB) {
+      if (win.includes(bg)) matchCount++;
+    }
+    if (matchCount >= requiredMatches) {
+      hits.push({ start: i, end: i + normQuery.length, score: matchCount / uniqueQB.length });
+    }
+  }
+
+  if (hits.length === 0) return [];
+
+  // スコアが高い候補を優先しつつ重複を除去
+  hits.sort((a, b) => b.score - a.score || a.start - b.start);
+  const kept: Array<{start: number; end: number}> = [];
+  for (const h of hits) {
+    const overlap = kept.some((k) => k.start <= h.end && h.start <= k.end);
+    if (!overlap) kept.push({ start: Math.max(0, h.start), end: Math.min(normText.length, h.end) });
+  }
+  return mergeRanges(kept);
+}
+
+/**
+ * ===== 統合検索: 完全一致 → 曖昧 の順で試みる =====
+ * highlightQuery は `\n` 区切りで複数フレーズを受け付ける。
+ * 各フレーズについて:
+ *   1. 完全一致（かな正規化）を試みる
+ *   2. ヒットがなければバイグラム曖昧検索にフォールバック
+ *   3. さらにサブワード（読点・スペース分割）でも試みる
+ */
+function findMatchRanges(text: string, highlightQuery: string): Array<{start: number; end: number}> {
+  if (!highlightQuery) return [];
+
+  const phrases = highlightQuery.split("\n").map((s) => s.trim()).filter((s) => s.length >= 2);
+
+  // 各フレーズのサブワードも候補に追加（区切り文字で分割）
+  const allTerms: string[] = [];
+  for (const p of phrases) {
+    allTerms.push(p);
+    const subs = p.split(/[\s　、。・,，()（）【】「」『』]+/).filter((s) => s.length >= 2);
+    allTerms.push(...subs);
+  }
+  const unique = [...new Set(allTerms)];
+
+  const allRanges: Array<{start: number; end: number}> = [];
+
+  for (const term of unique) {
+    // Step1: 完全一致（かな正規化）
+    const exactRanges = findExactRanges(text, term);
+    if (exactRanges.length > 0) {
+      allRanges.push(...exactRanges);
+      continue; // 完全一致があれば曖昧検索は不要
+    }
+
+    // Step2: バイグラム曖昧検索（3文字以上のみ）
+    if (term.length >= 3) {
+      const fuzzyRanges = findFuzzyRanges(text, term);
+      allRanges.push(...fuzzyRanges);
+    }
+  }
+
+  return mergeRanges(allRanges);
 }
 
 type HlCounter = { n: number };
@@ -239,6 +340,9 @@ interface EntryCardProps {
   onUpdateEntry: (entryId: string, updatedFields: Partial<Entry>) => void;
   onDeleteEntry: (entryId: string) => void;
   onRescan?: () => void;
+  /** 「元の書類を見る」から遷移してきた場合、タスクへ戻るコールバックとタスク名 */
+  onBackToTodo?: () => void;
+  backToTodoLabel?: string;
 }
 
 // ---- お帳面セクション表示 ----------------------------------------
@@ -304,10 +408,13 @@ export function EntryCard({
   onUpdateEntry,
   onDeleteEntry,
   onRescan,
+  onBackToTodo,
+  backToTodoLabel,
 }: EntryCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isFullscreenEdit, setIsFullscreenEdit] = useState(false);
   const [ocrFullscreen, setOcrFullscreen] = useState(false);
   const [hlMatchIndex, setHlMatchIndex] = useState(0);
   const [confirmState, setConfirmState] = useState<{ open: boolean; message: string; detail?: string; onConfirm: () => void }>({
@@ -386,7 +493,7 @@ export function EntryCard({
 
   return (
     <div
-      className={`bg-white border rounded-2xl shadow-sm ${
+      className={`app-card-interactive bg-white border rounded-2xl shadow-sm ${
         entry.isRead ? "border-slate-100" : "border-teal-200"
       }`}
     >
@@ -450,76 +557,46 @@ export function EntryCard({
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-      {/* 全画面ヘッダー（戻る＋前後ナビ） */}
-      <div className="flex flex-col gap-1.5 px-3 py-3 border-b border-slate-100 flex-shrink-0">
+      {/* 全画面ヘッダー（情報のみ、操作ボタンは下部） */}
+      <div className="flex flex-col gap-1 px-3 py-2 border-b border-slate-100 flex-shrink-0">
         {/* スワイプ用ハンドル */}
-        <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto -mt-1 mb-1" />
-        <div className="flex items-center gap-2">
+        <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto -mt-0.5 mb-0.5" />
+        {/* タスクに戻るバー（元の書類を見る経由の場合のみ） */}
+        {onBackToTodo && (
           <button
             type="button"
-            onClick={() => { setIsEditing(false); setIsExpanded(false); }}
-            className="flex items-center gap-0.5 text-sm font-bold text-teal-600 p-1 active:scale-95 transition flex-shrink-0"
+            onClick={onBackToTodo}
+            className="flex items-center gap-1.5 bg-teal-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg w-full justify-center active:scale-95 transition mb-0.5"
           >
-            <ChevronLeft size={18} /> 戻る
+            <ChevronLeft size={14} />
+            タスクに戻る
+            {backToTodoLabel && <span className="font-normal opacity-80 truncate max-w-[160px]">— {backToTodoLabel}</span>}
           </button>
+        )}
+        <div className="flex items-center gap-2">
           <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-600 flex-shrink-0">{entry.category}</span>
           <span className="text-xs text-slate-400 flex-shrink-0">{entry.date}</span>
-
-          {/* prev / next ナビゲーション */}
-          {(onPrev || onNext) && (
-            <div className="ml-auto flex items-center gap-1 flex-shrink-0">
-              {entryIndex !== undefined && entryTotal !== undefined && (
-                <span className="text-[10px] text-slate-400 mr-1">
-                  {entryIndex}/{entryTotal}
-                </span>
-              )}
-              <button
-                type="button"
-                disabled={!onPrev}
-                onClick={onPrev}
-                className="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-100 text-slate-600 disabled:opacity-30 active:scale-95 transition"
-                aria-label="前の書類"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button
-                type="button"
-                disabled={!onNext}
-                onClick={onNext}
-                className="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-100 text-slate-600 disabled:opacity-30 active:scale-95 transition"
-                aria-label="次の書類"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
+          {entryIndex !== undefined && entryTotal !== undefined && (
+            <span className="text-[10px] text-slate-400 ml-auto">
+              {entryIndex}/{entryTotal}
+            </span>
           )}
-
-          {todoCount > 0 && !onPrev && !onNext && (
+          {todoCount > 0 && (
             <button
               type="button"
               onClick={scrollToTodos}
-              className="ml-auto text-xs font-bold text-orange-700 bg-orange-100 px-2 py-1 rounded-full flex items-center gap-1 flex-shrink-0 active:scale-95 transition"
+              className={`${entryIndex === undefined ? "ml-auto" : ""} text-xs font-bold text-orange-700 bg-orange-100 px-2 py-1 rounded-full flex items-center gap-1 flex-shrink-0 active:scale-95 transition`}
             >
               {actionCount > 0 ? `やること ${actionCount}件` : `予定 ${eventCount}件`} ↓
             </button>
           )}
         </div>
-        {/* 前後ナビがある場合は下段にやることボタン */}
-        {(onPrev || onNext) && todoCount > 0 && (
-          <button
-            type="button"
-            onClick={scrollToTodos}
-            className="self-start text-xs font-bold text-orange-700 bg-orange-100 px-2.5 py-1 rounded-full flex items-center gap-1 active:scale-95 transition"
-          >
-            {actionCount > 0 ? `やること ${actionCount}件` : `予定 ${eventCount}件`} ↓
-          </button>
-        )}
         {entry.title && (
           <h2 className="text-base font-bold text-slate-800 leading-snug px-1">{entry.title}</h2>
         )}
       </div>
       {/* 本文スクロール領域 */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+      <div className="flex-1 overflow-y-auto px-4 space-y-3" style={{ paddingBottom: "max(80px, calc(env(safe-area-inset-bottom) + 80px))" }}>
       <div className="flex items-center justify-between pt-3">
         <div className="flex gap-1 flex-wrap items-center">
           {entry.childIds.map((childId) => {
@@ -595,14 +672,48 @@ export function EntryCard({
             </div>
           </div>
           <div>
-            <label className="text-[10px] font-bold text-slate-400 block mb-0.5">AIテキスト (Markdown)</label>
+            <div className="flex items-center justify-between mb-0.5">
+              <label className="text-[10px] font-bold text-slate-400">AIテキスト (Markdown)</label>
+              <button type="button" onClick={() => setIsFullscreenEdit(true)}
+                className="text-[10px] text-teal-600 font-bold px-2 py-0.5 rounded border border-teal-200 bg-teal-50 active:scale-95 transition">
+                全画面で編集
+              </button>
+            </div>
             <textarea
               value={editOcrText}
               onChange={(e) => setEditOcrText(e.target.value)}
-              rows={6}
+              onFocus={() => setIsFullscreenEdit(true)}
+              rows={4}
               className="w-full border border-slate-200 rounded-lg p-2.5 text-xs bg-white text-slate-800 resize-none outline-none focus:border-teal-500"
             />
           </div>
+
+          {/* 全画面テキスト編集モーダル */}
+          {isFullscreenEdit && (
+            <div className="fixed inset-0 z-[100] bg-white flex flex-col" style={{ paddingTop: "env(safe-area-inset-top)" }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-white flex-shrink-0">
+                <span className="text-sm font-bold text-slate-700">テキスト編集</span>
+              </div>
+              <textarea
+                autoFocus
+                value={editOcrText}
+                onChange={(e) => setEditOcrText(e.target.value)}
+                className="flex-1 w-full p-4 text-sm text-slate-800 bg-white resize-none outline-none leading-relaxed"
+                placeholder="テキストを編集..."
+              />
+              <div className="flex-shrink-0 border-t border-slate-200 bg-white px-3 py-2 flex items-center gap-2" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
+                <button type="button" onClick={() => setIsFullscreenEdit(false)}
+                  className="flex items-center gap-0.5 text-sm font-bold text-teal-600 px-3 py-2 rounded-xl bg-teal-50 active:scale-95 transition">
+                  <ChevronLeft size={16} /> 戻る
+                </button>
+                <div className="flex-1" />
+                <button type="button" onClick={() => setIsFullscreenEdit(false)}
+                  className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm font-bold active:scale-95 transition">
+                  完了
+                </button>
+              </div>
+            </div>
+          )}
           <div className="flex gap-2 justify-end">
             <button
               type="button"
@@ -619,12 +730,23 @@ export function EntryCard({
             <button
               type="button"
               onClick={() => {
+                // 修正内容を学習：元テキストと編集後テキストを比較してword単位の補正を記録
+                if (entry.ocrText && editOcrText && entry.ocrText !== editOcrText) {
+                  try {
+                    const stored = JSON.parse(localStorage.getItem("ochomen-corrections") || "[]") as { from: string; to: string }[];
+                    // 既存の補正を保持しつつ最新のペアを先頭に追加（最大50件）
+                    const newEntry = { from: entry.ocrText, to: editOcrText };
+                    const updated = [newEntry, ...stored.filter((c) => c.from !== entry.ocrText)].slice(0, 50);
+                    localStorage.setItem("ochomen-corrections", JSON.stringify(updated));
+                  } catch { /* ignore */ }
+                }
                 onUpdateEntry(entry.id, {
                   category: editCategory,
                   ocrText: editOcrText,
                   date: editDate,
                 });
                 setIsEditing(false);
+                setIsFullscreenEdit(false);
               }}
               className="px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-bold hover:bg-teal-700 transition"
             >
@@ -675,14 +797,14 @@ export function EntryCard({
                 <p className="text-[10px] text-slate-400 text-right pt-1">↗ タップで全画面</p>
               </div>
             ) : entry.imageUrl ? (
-              <div className="rounded-lg overflow-hidden border border-slate-100 relative group">
-                <Image
+              <div className="rounded-lg border border-slate-100 relative group">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
                   src={entry.imageUrl}
                   alt="スキャン画像"
-                  width={720}
-                  height={960}
                   onClick={(e) => { e.stopPropagation(); setLightboxOpen(true); }}
-                  className="w-full h-auto cursor-zoom-in"
+                  style={{ width: "100%", height: "auto", display: "block" }}
+                  className="cursor-zoom-in"
                 />
                 <button
                   type="button"
@@ -801,40 +923,16 @@ export function EntryCard({
       {ocrFullscreen && (() => {
         const fsCounter = { n: 0 };
         return (
-          <div className="fixed inset-0 z-50 bg-white flex flex-col" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white flex-shrink-0">
-              <div>
-                <span className="text-sm font-bold text-slate-800">{entry.category}</span>
-                <span className="text-xs text-slate-400 ml-2">{entry.date}</span>
-              </div>
-              <button type="button" onClick={() => setOcrFullscreen(false)} className="text-slate-400 p-1.5 bg-slate-100 rounded-full">
-                <X size={18} />
-              </button>
-            </div>
-            {/* マッチナビゲーションバー */}
-            {highlightQuery && totalHlMatches > 0 && (
-              <div className="flex items-center justify-between px-4 py-2 bg-yellow-50 border-b border-yellow-200 flex-shrink-0">
-                <span className="text-xs font-bold text-amber-700">
-                  {hlMatchIndex + 1} / {totalHlMatches}件
+          <div className="fixed inset-0 z-50 bg-white flex flex-col" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-white flex-shrink-0">
+              <span className="text-sm font-bold text-slate-800">{entry.category}</span>
+              <span className="text-xs text-slate-400">{entry.date}</span>
+              {highlightQuery && totalHlMatches > 0 && (
+                <span className="ml-auto text-xs font-bold text-amber-700 bg-yellow-50 px-2 py-0.5 rounded">
+                  {hlMatchIndex + 1}/{totalHlMatches}件
                 </span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => navigateMatch(-1)}
-                    className="flex items-center gap-0.5 text-xs font-bold text-amber-700 bg-yellow-100 hover:bg-yellow-200 px-3 py-1.5 rounded-lg transition"
-                  >
-                    <ChevronLeft size={14} /> 前へ
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigateMatch(+1)}
-                    className="flex items-center gap-0.5 text-xs font-bold text-amber-700 bg-yellow-100 hover:bg-yellow-200 px-3 py-1.5 rounded-lg transition"
-                  >
-                    次へ <ChevronRight size={14} />
-                  </button>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
             <div className="flex-1 overflow-y-auto p-5">
               <div className="text-sm space-y-3 leading-relaxed">
                 {entry.sections && entry.sections.length > 0
@@ -842,6 +940,25 @@ export function EntryCard({
                   : renderMarkdown(entry.ocrText, highlightQuery, `fs-${entry.id}`, fsCounter)
                 }
               </div>
+            </div>
+            {/* 下部ツールバー */}
+            <div className="flex-shrink-0 border-t border-slate-100 bg-white px-4 py-2 flex items-center gap-2" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
+              <button type="button" onClick={() => setOcrFullscreen(false)}
+                className="flex items-center gap-0.5 text-sm font-bold text-teal-600 px-3 py-2 rounded-xl bg-teal-50 active:scale-95 transition">
+                <ChevronLeft size={16} /> 戻る
+              </button>
+              {highlightQuery && totalHlMatches > 0 && (
+                <div className="ml-auto flex gap-2">
+                  <button type="button" onClick={() => navigateMatch(-1)}
+                    className="flex items-center gap-0.5 text-xs font-bold text-amber-700 bg-yellow-100 px-3 py-2 rounded-xl active:scale-95 transition">
+                    <ChevronLeft size={14} /> 前へ
+                  </button>
+                  <button type="button" onClick={() => navigateMatch(+1)}
+                    className="flex items-center gap-0.5 text-xs font-bold text-amber-700 bg-yellow-100 px-3 py-2 rounded-xl active:scale-95 transition">
+                    次へ <ChevronRight size={14} />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -852,18 +969,8 @@ export function EntryCard({
         <div
           className="fixed inset-0 bg-black z-[60] flex flex-col"
           onClick={() => setLightboxOpen(false)}
-          style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+          style={{ paddingTop: "env(safe-area-inset-top)" }}
         >
-          <div className="flex justify-between items-center p-3 bg-black/80">
-            <span className="text-white text-xs font-bold">{entry.category} — {entry.date}</span>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setLightboxOpen(false); }}
-              className="text-white p-1.5 bg-white/20 rounded-full"
-            >
-              <X size={18} />
-            </button>
-          </div>
           <div
             className="flex-1 overflow-auto flex items-start justify-center p-2"
             onClick={(e) => e.stopPropagation()}
@@ -875,20 +982,62 @@ export function EntryCard({
               style={{ minWidth: "150%", height: "auto", maxWidth: "none" }}
             />
           </div>
-          <p className="text-white/50 text-[10px] text-center py-2">ピンチで拡大縮小・タップ外で閉じる</p>
+          <div className="flex-shrink-0 flex items-center px-3 py-2 bg-black/80" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}
+            onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setLightboxOpen(false)}
+              className="flex items-center gap-1 text-white text-sm font-bold px-3 py-2 bg-white/20 rounded-xl active:scale-95 transition"
+            >
+              <ChevronLeft size={16} /> 戻る
+            </button>
+            <span className="text-white/50 text-[10px] ml-auto">ピンチで拡大縮小</span>
+          </div>
         </div>
       )}
 
-      {/* 書類削除エリア */}
-      <div className="border-t border-slate-100 pt-3 flex gap-2" onClick={(e) => e.stopPropagation()}>
+      </div>
+      {/* 下部固定ツールバー */}
+      <div className="flex-shrink-0 border-t border-slate-100 bg-white px-3 py-2 flex items-center gap-2" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          onClick={() => { setIsEditing(false); setIsExpanded(false); }}
+          className="flex items-center gap-0.5 text-sm font-bold text-teal-600 px-3 py-2 rounded-xl bg-teal-50 active:scale-95 transition flex-shrink-0"
+        >
+          <ChevronLeft size={16} /> 戻る
+        </button>
+        {/* prev / next ナビゲーション */}
+        {(onPrev || onNext) && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              type="button"
+              disabled={!onPrev}
+              onClick={onPrev}
+              className="w-9 h-9 rounded-xl flex items-center justify-center bg-slate-100 text-slate-600 disabled:opacity-30 active:scale-95 transition"
+              aria-label="前の書類"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <button
+              type="button"
+              disabled={!onNext}
+              onClick={onNext}
+              className="w-9 h-9 rounded-xl flex items-center justify-center bg-slate-100 text-slate-600 disabled:opacity-30 active:scale-95 transition"
+              aria-label="次の書類"
+            >
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        )}
+        <div className="flex-1" />
         {onRescan && (
           <button
             type="button"
             onClick={onRescan}
-            className="flex-1 py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-teal-100 transition"
+            className="p-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 active:scale-95 transition"
+            aria-label="再スキャン"
           >
-            <RefreshCw size={12} />
-            再スキャン
+            <RefreshCw size={14} />
           </button>
         )}
         <button
@@ -903,12 +1052,11 @@ export function EntryCard({
               () => onDeleteEntry(entry.id)
             );
           }}
-          className="flex-1 py-2 rounded-xl border border-red-100 bg-red-50 text-red-600 text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-red-100 transition"
+          className="p-2 rounded-xl border border-red-100 bg-red-50 text-red-500 active:scale-95 transition"
+          aria-label="削除"
         >
-          <Trash2 size={12} />
-          この書類とやることを削除
+          <Trash2 size={14} />
         </button>
-      </div>
       </div>
       </div>
       )}

@@ -26,10 +26,16 @@ export async function analyzeOcrText(
   categoryName: string
 ): Promise<OcrAnalysisResult> {
   try {
+    // 過去の修正補正データをlocalStorageから取得
+    let corrections: { from: string; to: string }[] = [];
+    try {
+      corrections = JSON.parse(localStorage.getItem("ochomen-corrections") || "[]");
+    } catch { /* ignore */ }
+
     const response = await fetch("/api/structure-ocr", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rawOcrText, categoryName }),
+      body: JSON.stringify({ rawOcrText, categoryName, corrections }),
     });
 
     if (!response.ok) return { text: rawOcrText, todoDrafts: [] };

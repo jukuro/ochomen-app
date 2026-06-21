@@ -11,8 +11,14 @@ export function formatRelativeDate(dateStr: string, today = APP_TODAY): string {
   if (diffDays === 0) return "今日";
   if (diffDays === 1) return "明日";
   if (diffDays === -1) return "昨日";
-  if (diffDays < 0) return `${Math.abs(diffDays)}日前`;
+  if (diffDays < 0) {
+    const absDays = Math.abs(diffDays);
+    if (absDays > 365) return "期限切れ";          // 1年以上前は具体的な日数を省略
+    if (absDays > 30) return `${Math.floor(absDays / 30)}ヶ月前`;
+    return `${absDays}日前`;
+  }
   if (diffDays <= 7) return `${diffDays}日後`;
+  if (diffDays <= 30) return `${Math.ceil(diffDays / 7)}週間後`;
   return dateStr;
 }
 

@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   BookOpen,
+  BookMarked,
   Settings,
   Camera,
   X,
@@ -21,6 +23,8 @@ import {
   TrendingUp,
   Sparkles,
   Search,
+  ChevronLeft,
+  Star,
 } from "lucide-react";
 import type { Todo, Entry, Child, Screen, TodoDraft, Member, Diary, CaptureDoc, CapturePage } from "@/lib/types";
 import { APP_TODAY, isOverdue, isToday, isTomorrow } from "@/lib/dates";
@@ -46,6 +50,7 @@ import { TodoRow } from "@/components/TodoRow";
 import { Toast } from "@/components/Toast";
 import { PremiumModal, PLAN_LIMITS, type PlanId } from "@/components/PremiumModal";
 import { TodoDetailSheet } from "@/components/TodoDetailSheet";
+import { OchomenView } from "@/components/OchomenView";
 import {
   isSupabaseConfigured,
   supabase,
@@ -92,6 +97,7 @@ export default function App() {
   const [openEntryHighlight, setOpenEntryHighlight] = useState<string>("");
   const [showCalendarCompletedTodos, setShowCalendarCompletedTodos] = useState(false);
   const lastScanDataRef = useRef<{ base64: string; mimeType: string } | null>(null);
+  const calSwipeStartX = useRef<number | null>(null);
   const [scanErrorType, setScanErrorType] = useState<string | null>(null);
   const [alarmNotice, setAlarmNotice] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -155,6 +161,7 @@ export default function App() {
   const [showTodayTodosExpanded, setShowTodayTodosExpanded] = useState(false);
   const [recordTodosExpanded, setRecordTodosExpanded] = useState(false);
   const [calendarViewMode, setCalendarViewMode] = useState<"month" | "week" | "day">("month");
+  const [calendarListOnly, setCalendarListOnly] = useState(false);
   const [calendarQuickAddDate, setCalendarQuickAddDate] = useState<string | null>(null);
   const [calendarQuickTask, setCalendarQuickTask] = useState("");
   const [calendarQuickType, setCalendarQuickType] = useState<"todo" | "event" | "shopping">("todo");
@@ -167,6 +174,8 @@ export default function App() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [detailTodo, setDetailTodo] = useState<import("@/lib/types").Todo | null>(null);
+  // 「元の書類を見る」ナビゲーション後に「タスクに戻る」ボタンで復帰するための状態
+  const [sourceNavTodo, setSourceNavTodo] = useState<import("@/lib/types").Todo | null>(null);
   // "all" | "school" | "family" | "community" | childId（例: "c1"）
   const [calendarScopeFilter, setCalendarScopeFilter] = useState<string>("all");
   const [currentPlan, setCurrentPlan] = useState<PlanId>("free");
@@ -1412,6 +1421,10 @@ export default function App() {
           onUpdateEntry={handleUpdateEntry}
           onDeleteEntry={handleDeleteEntry}
           onRescan={() => setIsScanModalOpen(true)}
+          onBackToTodo={sourceNavTodo && openEntryId === entry.id
+            ? () => { setSourceNavTodo(null); setOpenEntryId(null); setCurrentScreen("home"); }
+            : undefined}
+          backToTodoLabel={sourceNavTodo?.task}
         />
       </div>
     );
@@ -1498,10 +1511,24 @@ export default function App() {
             : calendarViewMode === "week" ? `${Number(weekDays[0].slice(5,7))}/${Number(weekDays[0].slice(8,10))}〜${Number(weekDays[6].slice(5,7))}/${Number(weekDays[6].slice(8,10))}`
             : `${Number(anchorDay.slice(5,7))}月${Number(anchorDay.slice(8,10))}日`;
 
+          const handleCalSwipeStart = (e: React.TouchEvent) => { calSwipeStartX.current = e.touches[0].clientX; };
+          const handleCalSwipeEnd = (e: React.TouchEvent) => {
+            if (calSwipeStartX.current === null) return;
+            const dx = e.changedTouches[0].clientX - calSwipeStartX.current;
+            calSwipeStartX.current = null;
+            if (Math.abs(dx) < 50) return;
+            const dir = dx < 0 ? 1 : -1;
+            if (calendarViewMode === "month") moveCalendarMonth(dir);
+            else if (calendarViewMode === "week") moveWeek(dir);
+            else moveDay(dir);
+          };
+
           return (
           <div
             className="fixed inset-0 z-50 bg-white flex flex-col"
             style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+            onTouchStart={handleCalSwipeStart}
+            onTouchEnd={handleCalSwipeEnd}
           >
             {/* ヘッダー */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-white">
@@ -1514,11 +1541,20 @@ export default function App() {
                 calendarViewMode === "month" ? moveCalendarMonth(1) :
                 calendarViewMode === "week" ? moveWeek(1) : moveDay(1)
               } className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold flex items-center justify-center text-sm">→</button>
+              {/* グリッド ⇔ リストのみ 切り替え */}
+              <button
+                type="button"
+                onClick={() => setCalendarListOnly((v) => !v)}
+                title={calendarListOnly ? "カレンダー表示に戻す" : "リストのみ表示"}
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition ${calendarListOnly ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-500"}`}
+              >
+                {calendarListOnly ? "🗓️" : "📋"}
+              </button>
               <button type="button" onClick={() => setShowCalendarFullscreen(false)} className="text-slate-400 hover:text-slate-700 p-1 ml-1"><X size={20} /></button>
             </div>
 
             {/* ビュー切り替えタブ */}
-            <div className="flex bg-slate-100 mx-3 my-2 rounded-xl p-0.5 text-xs font-bold">
+            <div className="flex bg-slate-100 mx-3 mt-2 mb-1 rounded-xl p-0.5 text-xs font-bold">
               {(["month", "week", "day"] as const).map((v) => (
                 <button key={v} type="button" onClick={() => setCalendarViewMode(v)}
                   className={`flex-1 py-1.5 rounded-lg transition ${calendarViewMode === v ? "bg-white text-teal-700 shadow" : "text-slate-400"}`}>
@@ -1527,15 +1563,42 @@ export default function App() {
               ))}
             </div>
 
+            {/* スコープ・子供フィルター（全画面共通） */}
+            <div className="flex gap-1.5 overflow-x-auto px-3 pb-2 flex-shrink-0">
+              {[
+                { key: "all",       label: "すべて", icon: "📋" },
+                { key: "school",    label: "保育園", icon: "🏫" },
+                { key: "family",    label: "家族",   icon: "🏠" },
+                { key: "community", label: "地域",   icon: "📍" },
+              ].map(({ key, label, icon }) => (
+                <button key={key} type="button" onClick={() => setCalendarScopeFilter(key)}
+                  className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border transition ${
+                    calendarScopeFilter === key ? "bg-teal-600 text-white border-teal-600" : "bg-white text-slate-500 border-slate-200"
+                  }`}>
+                  {icon} {label}
+                </button>
+              ))}
+              {children.filter((c) => selectedChildIds.includes(c.id)).map((child) => (
+                <button key={child.id} type="button" onClick={() => setCalendarScopeFilter(child.id)}
+                  className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border transition ${
+                    calendarScopeFilter === child.id ? `text-white border-transparent ${child.color}` : "bg-white text-slate-500 border-slate-200"
+                  }`}>
+                  {child.avatar} {child.name}
+                </button>
+              ))}
+            </div>
+
             {/* 月ビュー */}
             {calendarViewMode === "month" && (
               <div className="flex-1 overflow-hidden flex flex-col">
+                {/* カレンダーグリッド（リストのみモード時は非表示） */}
+                {!calendarListOnly && (<>
                 <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50 flex-shrink-0">
                   {["日", "月", "火", "水", "木", "金", "土"].map((d, idx) => (
                     <div key={d} className={`py-2 text-center text-xs font-bold ${idx === 0 ? "text-red-500" : idx === 6 ? "text-blue-500" : "text-slate-400"}`}>{d}</div>
                   ))}
                 </div>
-                <div className={`overflow-y-auto transition-all ${selectedDay ? "flex-none" : "flex-1"}`} style={selectedDay ? { maxHeight: "42%" } : {}}>
+                <div className={`overflow-y-auto transition-all flex-none`} style={{ maxHeight: "42%" }}>
                   <div className="grid grid-cols-7 border-l border-t border-slate-100">
                     {Array.from({ length: calendarStartWeekday }).map((_, i) => (
                       <div key={`blank-${i}`} className="border-r border-b border-slate-100 min-h-[56px]" />
@@ -1568,56 +1631,97 @@ export default function App() {
                     })}
                   </div>
                 </div>
-                {selectedDay && (
-                  <div className="flex-1 overflow-y-auto border-t border-slate-200 bg-white">
-                    <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
-                      <span className="text-sm font-bold text-slate-700">{Number(selectedDay.slice(5,7))}月{Number(selectedDay.slice(8,10))}日</span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setCalendarQuickAddDate(calendarQuickAddDate === selectedDay ? null : selectedDay)}
-                          className="text-teal-600 text-xs font-bold flex items-center gap-0.5 bg-teal-50 px-2 py-1 rounded-lg"
-                        >
-                          <Plus size={12} /> 追加
-                        </button>
-                        <button type="button" onClick={() => setSelectedDay(null)} className="text-slate-400 p-1"><X size={14} /></button>
-                      </div>
-                    </div>
-                    {calendarQuickAddDate === selectedDay && (
-                      <div className="px-3 pt-2 pb-1 border-b border-teal-100 bg-teal-50/60 space-y-2">
-                        <div className="flex gap-1">
-                          {(["todo","event","shopping"] as const).map((t) => (
-                            <button key={t} type="button" onClick={() => setCalendarQuickType(t)}
-                              className={`flex-1 py-1 rounded-lg text-[11px] font-bold ${calendarQuickType === t ? "bg-teal-600 text-white" : "bg-white text-slate-500 border border-slate-200"}`}>
-                              {t === "todo" ? "やること" : t === "event" ? "予定" : "買い物"}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={calendarQuickTask}
-                            onChange={(e) => setCalendarQuickTask(e.target.value)}
-                            onKeyDown={(e) => e.key === "Enter" && handleAddTodoFromCalendar()}
-                            placeholder="内容を入力…"
-                            className="flex-1 text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-teal-400 bg-white"
-                            autoFocus
-                          />
-                          <button type="button" onClick={handleAddTodoFromCalendar}
-                            disabled={!calendarQuickTask.trim()}
-                            className="px-3 py-1.5 bg-teal-600 text-white text-sm font-bold rounded-lg disabled:opacity-40">
-                            追加
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    <div className="p-3 space-y-2">
-                      {filterByScope(getTasksForDate(selectedDay)).length > 0
-                        ? filterByScope(getTasksForDate(selectedDay)).map((t) => renderTodoRow(t, "card"))
-                        : <p className="text-sm text-slate-400 text-center py-4">この日の予定はありません</p>}
-                    </div>
+                </>)}
+                {/* 月ビューの予定リスト（週ビューと同仕様） */}
+                <div className="flex-1 overflow-y-auto border-t border-slate-100 bg-white">
+                  <div className="p-3 space-y-1">
+                    {(() => {
+                      // 今月の全日程をまとめてリスト化
+                      const monthDays = Array.from({ length: calendarDaysInMonth }, (_, i) => {
+                        const d = i + 1;
+                        return `${currentCalendarMonth}-${String(d).padStart(2, "0")}`;
+                      });
+                      const hasAnyTodo = monthDays.some((ds) => filterByScope(getTasksForDate(ds)).length > 0);
+                      if (!hasAnyTodo) return (
+                        <p className="text-sm text-slate-400 text-center py-8">今月の予定はありません</p>
+                      );
+                      return monthDays.map((ds) => {
+                        const todos = filterByScope(getTasksForDate(ds));
+                        if (!todos.length) return null;
+                        const wd = ["日","月","火","水","木","金","土"][new Date(`${ds}T00:00:00`).getDay()];
+                        const isSelected = selectedDay === ds;
+                        const isTodayDay = ds === APP_TODAY;
+                        return (
+                          <div key={ds}>
+                            <div
+                              className={`flex items-center justify-between text-xs font-bold mt-3 mb-1 cursor-pointer ${isTodayDay ? "text-teal-700" : "text-slate-500"}`}
+                              onClick={() => setSelectedDay(isSelected ? null : ds)}
+                            >
+                              <span>{Number(ds.slice(5,7))}月{Number(ds.slice(8,10))}日（{wd}）{isTodayDay && " 今日"}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setCalendarQuickAddDate(calendarQuickAddDate === ds ? null : ds); setSelectedDay(ds); }}
+                                className="text-teal-600 text-[10px] font-bold flex items-center gap-0.5 bg-teal-50 px-1.5 py-0.5 rounded"
+                              >
+                                <Plus size={10} /> 追加
+                              </button>
+                            </div>
+                            {calendarQuickAddDate === ds && (
+                              <div className="px-2 pt-1 pb-2 mb-1 border border-teal-100 bg-teal-50/60 rounded-xl space-y-1.5">
+                                <div className="flex gap-1">
+                                  {(["todo","event","shopping"] as const).map((t) => (
+                                    <button key={t} type="button" onClick={() => setCalendarQuickType(t)}
+                                      className={`flex-1 py-1 rounded-lg text-[10px] font-bold ${calendarQuickType === t ? "bg-teal-600 text-white" : "bg-white text-slate-400 border border-slate-200"}`}>
+                                      {t === "todo" ? "やること" : t === "event" ? "予定" : "買い物"}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="flex gap-1.5">
+                                  <input type="text" value={calendarQuickTask} onChange={(e) => setCalendarQuickTask(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && handleAddTodoFromCalendar()}
+                                    placeholder="内容を入力…" autoFocus
+                                    className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-teal-400 bg-white" />
+                                  <button type="button" onClick={handleAddTodoFromCalendar} disabled={!calendarQuickTask.trim()}
+                                    className="px-2.5 py-1.5 bg-teal-600 text-white text-xs font-bold rounded-lg disabled:opacity-40">追加</button>
+                                </div>
+                              </div>
+                            )}
+                            <div className="space-y-1.5">
+                              {todos.map((t) => (
+                                <div key={t.id}
+                                  className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm border transition ${
+                                    t.markedByUser
+                                      ? "bg-amber-50 border-amber-300 shadow-sm"
+                                      : t.type === "event" ? "bg-blue-50 border-blue-100 text-blue-800" :
+                                        t.type === "shopping" ? "bg-amber-50 border-amber-100 text-amber-800" :
+                                        "bg-teal-50 border-teal-100 text-teal-800"
+                                  }`}>
+                                  {/* ★ 参加マークボタン */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); handleUpdateTodo(t.id, { markedByUser: !t.markedByUser }); }}
+                                    className={`flex-shrink-0 p-1 rounded-full transition active:scale-90 ${t.markedByUser ? "text-amber-500" : "text-slate-300 hover:text-amber-400"}`}
+                                    title={t.markedByUser ? "マーク解除" : "自分に関係ある予定としてマーク"}
+                                  >
+                                    <Star size={14} fill={t.markedByUser ? "currentColor" : "none"} />
+                                  </button>
+                                  {/* タップで詳細 */}
+                                  <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setDetailTodo(t)}>
+                                    <div className="flex items-center gap-1.5">
+                                      {t.markedByUser && <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full flex-shrink-0">参加</span>}
+                                      <span className={`font-medium truncate ${t.isCompleted ? "line-through opacity-50" : t.markedByUser ? "text-amber-900" : ""}`}>{t.task}</span>
+                                    </div>
+                                  </div>
+                                  <span className="text-[10px] opacity-60 flex-shrink-0">{t.type === "event" ? "予定" : t.type === "shopping" ? "買い物" : "やること"}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
-                )}
+                </div>
               </div>
             )}
 
@@ -1641,7 +1745,7 @@ export default function App() {
                 </div>
                 <div className="p-3 space-y-1">
                   {weekDays.map((ds) => {
-                    const todos = getTasksForDate(ds);
+                    const todos = filterByScope(getTasksForDate(ds));
                     if (!todos.length) return null;
                     const wd = ["日","月","火","水","木","金","土"][new Date(`${ds}T00:00:00`).getDay()];
                     return (
@@ -1649,14 +1753,27 @@ export default function App() {
                         <div className="text-xs font-bold text-slate-500 mt-3 mb-1">{Number(ds.slice(5,7))}月{Number(ds.slice(8,10))}日（{wd}）</div>
                         <div className="space-y-1.5">
                           {todos.map((t) => (
-                            <div key={t.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm border ${
-                              t.type === "event" ? "bg-blue-50 border-blue-100 text-blue-800" :
-                              t.type === "shopping" ? "bg-amber-50 border-amber-100 text-amber-800" :
-                              "bg-teal-50 border-teal-100 text-teal-800"
+                            <div key={t.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm border transition ${
+                              t.markedByUser
+                                ? "bg-amber-50 border-amber-300 shadow-sm"
+                                : t.type === "event" ? "bg-blue-50 border-blue-100 text-blue-800" :
+                                  t.type === "shopping" ? "bg-amber-50 border-amber-100 text-amber-800" :
+                                  "bg-teal-50 border-teal-100 text-teal-800"
                             }`}>
-                              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${t.type === "event" ? "bg-blue-500" : t.type === "shopping" ? "bg-amber-500" : "bg-teal-500"}`}></span>
-                              <span className="flex-1 font-medium">{t.task}</span>
-                              <span className="text-xs opacity-60">{t.type === "event" ? "予定" : t.type === "shopping" ? "買い物" : "やること"}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateTodo(t.id, { markedByUser: !t.markedByUser })}
+                                className={`flex-shrink-0 p-0.5 transition active:scale-90 ${t.markedByUser ? "text-amber-500" : "text-slate-300 hover:text-amber-400"}`}
+                              >
+                                <Star size={13} fill={t.markedByUser ? "currentColor" : "none"} />
+                              </button>
+                              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setDetailTodo(t)}>
+                                <div className="flex items-center gap-1.5">
+                                  {t.markedByUser && <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1 py-0.5 rounded-full flex-shrink-0">参加</span>}
+                                  <span className={`font-medium truncate ${t.markedByUser ? "text-amber-900" : ""}`}>{t.task}</span>
+                                </div>
+                              </div>
+                              <span className="text-xs opacity-60 flex-shrink-0">{t.type === "event" ? "予定" : t.type === "shopping" ? "買い物" : "やること"}</span>
                             </div>
                           ))}
                         </div>
@@ -1676,9 +1793,9 @@ export default function App() {
                 <div className="text-sm font-bold text-slate-700 mb-3">
                   {Number(anchorDay.slice(5,7))}月{Number(anchorDay.slice(8,10))}日（{["日","月","火","水","木","金","土"][new Date(`${anchorDay}T00:00:00`).getDay()]}）
                 </div>
-                {getTasksForDate(anchorDay).length > 0 ? (
+                {filterByScope(getTasksForDate(anchorDay)).length > 0 ? (
                   <div className="space-y-2">
-                    {getTasksForDate(anchorDay).map((t) => renderTodoRow(t, "card"))}
+                    {filterByScope(getTasksForDate(anchorDay)).map((t) => renderTodoRow(t, "card"))}
                   </div>
                 ) : (
                   <div className="text-center py-16 text-slate-400">
@@ -2436,6 +2553,23 @@ export default function App() {
           </>
         )}
 
+        {/* お帳面ビュー */}
+        {currentScreen === "ochomen" && (
+          <OchomenView
+            entries={entries}
+            childProfiles={children}
+            onClose={() => setCurrentScreen("home")}
+            onUpdateSection={(entryId, sectionIndex, patch) => {
+              const entry = entries.find((e) => e.id === entryId);
+              if (!entry || !entry.sections) return;
+              const updatedSections = entry.sections.map((s, i) =>
+                i === sectionIndex ? { ...s, ...patch } : s
+              );
+              handleUpdateEntry(entryId, { sections: updatedSections });
+            }}
+          />
+        )}
+
         {/* 買い物リスト */}
         {currentScreen === "shopping" && (
           <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
@@ -2897,20 +3031,25 @@ export default function App() {
         })()}
 
         {/* ボトムナビ */}
-        <nav className="bg-white border-t border-slate-100 py-2 flex justify-around items-center z-40 flex-shrink-0" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
+        <nav className="app-bottom-nav border-t border-slate-100 px-2 py-2 flex justify-around items-center z-40 flex-shrink-0" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
           {(
             [
               { id: "home" as Screen, icon: Home, label: "ホーム" },
               { id: "timeline" as Screen, icon: BookOpen, label: "記録" },
+              { id: "ochomen" as Screen, icon: BookMarked, label: "お帳面" },
               { id: "shopping" as Screen, icon: ShoppingBag, label: "買い物" },
               { id: "calendar" as Screen, icon: CalendarIcon, label: "カレンダー" },
             ] as const
           ).map(({ id, icon: Icon, label }) => (
             <button
               key={id}
-              onClick={() => setCurrentScreen(id)}
-              className={`flex flex-col items-center gap-0.5 text-xs font-bold py-1 px-4 transition ${
-                currentScreen === id ? "text-teal-600" : "text-slate-400"
+              onClick={() => {
+                setCurrentScreen(id);
+                // カレンダーは即全画面表示
+                if (id === "calendar") setShowCalendarFullscreen(true);
+              }}
+              className={`app-nav-button flex flex-col items-center justify-center gap-0.5 text-xs font-bold py-1 px-2 transition active:scale-95 ${
+                currentScreen === id ? "app-nav-button-active text-teal-600" : "text-slate-400"
               }`}
             >
               <Icon size={20} />
@@ -2928,7 +3067,7 @@ export default function App() {
               onClick={() => setShowFabMenu(false)}
             />
             <div
-              className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl z-30 animate-slide-up px-5 pt-4"
+              className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl rounded-t-3xl z-30 animate-slide-up px-5 pt-4 shadow-2xl border-t border-white/70"
               style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}
             >
               <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto mb-5" />
@@ -3034,7 +3173,7 @@ export default function App() {
         <button
           onClick={() => setShowFabMenu(!showFabMenu)}
           style={{ bottom: "calc(4.5rem + env(safe-area-inset-bottom))" }}
-          className={`absolute right-5 w-14 h-14 text-white rounded-full flex items-center justify-center shadow-lg transition duration-200 active:scale-95 z-30 ${
+          className={`app-fab absolute right-5 w-14 h-14 text-white rounded-full flex items-center justify-center transition duration-200 active:scale-95 z-30 ${
             showFabMenu ? "bg-slate-700 rotate-45" : "bg-teal-600 hover:bg-teal-700"
           }`}
         >
@@ -3193,15 +3332,34 @@ export default function App() {
           }}
         />
 
+        {/* 「元の書類を見る」後 → document.body Portal でコンテナのoverflow-hiddenを回避 */}
+        {sourceNavTodo && typeof window !== "undefined" && createPortal(
+          <div
+            style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999, display: "flex", justifyContent: "center", paddingTop: "max(env(safe-area-inset-top, 0px), 8px)", pointerEvents: "none" }}
+          >
+            <button
+              type="button"
+              onClick={() => { setSourceNavTodo(null); setCurrentScreen("home"); }}
+              style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: "6px", background: "rgba(15,23,42,0.92)", color: "white", fontSize: "13px", fontWeight: "bold", padding: "10px 18px", borderRadius: "9999px", boxShadow: "0 4px 24px rgba(0,0,0,0.4)", border: "none", cursor: "pointer", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)" }}
+            >
+              ← タスクに戻る
+              <span style={{ fontSize: "11px", opacity: 0.7, fontWeight: "normal", maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sourceNavTodo.task}</span>
+            </button>
+          </div>,
+          document.body
+        )}
+
         {/* Todo 詳細ドロワー */}
         <TodoDetailSheet
           todo={detailTodo}
           entries={entries}
           childProfiles={children}
           members={members}
-          onClose={() => setDetailTodo(null)}
+          onClose={() => { setDetailTodo(null); setSourceNavTodo(null); }}
           onToggleComplete={(id) => { toggleTodoComplete(id); }}
           onOpenSource={(entryId, highlight) => {
+            // 戻れるように現在のtodoを保存
+            setSourceNavTodo(detailTodo);
             scrollToEntry(entryId, undefined, { asOcr: true, highlightText: highlight });
             setDetailTodo(null);
           }}

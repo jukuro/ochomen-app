@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { generateSectionTitle } from "@/lib/sectionTitle";
 
 const apiKey = process.env.GEMINI_API_KEY || "";
 
@@ -94,6 +95,10 @@ const SECTIONS_SCHEMA = {
       text: {
         type: "STRING",
         description: "そのセクションのテキスト全文。Markdown整形済みにすること。",
+      },
+      title: {
+        type: "STRING",
+        description: "このセクションの内容を要約した短いタイトル（10〜15文字程度）。書き出しをそのまま使わず、内容のテーマを表す言葉で。例：「運動会の様子」「体調確認のお願い」「お弁当の準備について」",
       },
     },
     required: ["author", "text"],
@@ -221,6 +226,34 @@ function autoReminderAt(dueDate: string): "none" | "today" | "1day" | "3day" {
   return "3day";                  // それ以降
 }
 
+/**
+ * 書類に記載された年が古い場合（例：令和5年＝2023年の文書を2026年にスキャン）、
+ * 日付を現在年に補正する。
+ * - 今日より2年以上前の日付 → 月日を保持したまま現在年に変換
+ * - 変換後の日付が1ヶ月以上前なら来年に繰り上げ（再来年以降は対象外）
+ */
+function fixAncientYear(dueDate: string): string {
+  if (!dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return dueDate;
+  const today = new Date(TODAY);
+  const original = new Date(dueDate);
+  const yearDiff = today.getFullYear() - original.getFullYear();
+
+  // 1年以内のずれは正常（去年の期限などは意図的な可能性あり）
+  if (yearDiff <= 1) return dueDate;
+
+  // 2年以上前 → 現在年に置き換え
+  const currentYear = today.getFullYear();
+  const thisYearDate = new Date(dueDate.replace(/^\d{4}/, String(currentYear)));
+
+  // 1ヶ月以上前になるなら来年に
+  const oneMonthAgo = new Date(today);
+  oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+  if (thisYearDate < oneMonthAgo) {
+    return dueDate.replace(/^\d{4}/, String(currentYear + 1));
+  }
+  return dueDate.replace(/^\d{4}/, String(currentYear));
+}
+
 function validateAndMapDrafts(
   raw: Array<Record<string, unknown>>
 ): OcrAnalysisResultBackend["todoDrafts"] {
@@ -228,8 +261,8 @@ function validateAndMapDrafts(
     .filter((d) => d && typeof d.task === "string" && (d.task as string).trim())
     .map((d) => {
       const rawDate = typeof d.dueDate === "string" ? d.dueDate : "";
-      // YYYY-MM-DD 形式のみ受け入れる（不完全な日付を除外）
-      const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : "";
+      // YYYY-MM-DD 形式のみ受け入れ、古い年は自動補正
+      const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? fixAncientYear(rawDate) : "";
       return {
         task: (d.task as string).trim(),
         dueDate,
@@ -347,11 +380,17 @@ export async function analyzeImageOcr(
     const rawSections = Array.isArray(parsed.sections) ? parsed.sections : [];
     const sections: OcrSection[] = rawSections
       .filter((s) => s && (s.author === "teacher" || s.author === "parent") && typeof s.text === "string" && (s.text as string).trim())
-      .map((s) => ({
-        author: s.author as "teacher" | "parent",
-        date: typeof s.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.date) ? s.date : undefined,
-        text: (s.text as string).replace(/\\n/g, "\n").trim(),
-      }));
+      .map((s) => {
+        const text = (s.text as string).replace(/\\n/g, "\n").trim();
+        // Geminiが生成したtitleがあればそれを優先、なければheuristicで生成
+        const aiTitle = typeof s.title === "string" && s.title.trim() ? s.title.trim() : undefined;
+        return {
+          author: s.author as "teacher" | "parent",
+          date: typeof s.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.date) ? s.date : undefined,
+          text,
+          title: aiTitle ?? generateSectionTitle(text),
+        };
+      });
 
     return {
       text: structuredText,
@@ -366,6 +405,7 @@ export async function analyzeImageOcr(
     throw error;
   }
 }
+
 
 /**
  * 互換用：OCRテキストを構造化して返す

@@ -263,8 +263,13 @@ export function TodoDetailSheet({
             <button
               type="button"
               onClick={() => {
-                onOpenSource(todo.originalEntryId, todo.task);
-                onClose();
+                // \n 区切りで複数フレーズを渡す → EntryCard 側で全て検索
+                const parts: string[] = [];
+                if (todo.reason) parts.push(todo.reason);
+                if (todo.task) parts.push(todo.task);
+                // onClose() は呼ばない: onOpenSource 内で setDetailTodo(null) が実行されるため
+                // ここで onClose() を呼ぶと setSourceNavTodo(null) が走りボタンが消えてしまう
+                onOpenSource(todo.originalEntryId, parts.join("\n"));
               }}
               className="w-full flex items-center justify-between py-3 px-4 bg-teal-50 rounded-xl border border-teal-100 active:bg-teal-100 transition"
             >

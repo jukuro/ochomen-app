@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useCallback } from "react";
 import { Camera, Loader2, Sparkles, Trash2, X, CheckCircle2, AlertCircle, Clock, Plus, RotateCw } from "lucide-react";
 import type { Child, CaptureDoc, CapturePage, EntrySection } from "@/lib/types";
 import { compressAndRotate } from "@/lib/imageCompress";
@@ -47,6 +47,10 @@ export function BatchScanModal({
 }: BatchScanModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isCompressing, setIsCompressing] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const toggleSectionExpand = useCallback((key: string) => {
+    setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
   // 撮影対象：null = 新しい書類、docId = その書類にページ追加
   const targetDocRef = useRef<string | null>(null);
   // 拡大プレビュー中のページ
@@ -300,33 +304,67 @@ export function BatchScanModal({
 
                     {/* お帳面セクション確認・修正 UI */}
                     {doc.sections && doc.sections.length > 0 && (
-                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 space-y-2">
+                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 space-y-3">
                         <p className="text-[11px] font-bold text-indigo-700 flex items-center gap-1">
                           📖 お帳面モード — 先生と保護者の区別を確認
                         </p>
-                        {doc.sections.map((sec, si) => (
-                          <div key={si} className={`rounded-lg p-2.5 border text-xs space-y-1 ${sec.author === "teacher" ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"}`}>
-                            <div className="flex items-center justify-between gap-2">
-                              <span className={`font-bold ${sec.author === "teacher" ? "text-emerald-700" : "text-amber-700"}`}>
-                                {sec.author === "teacher" ? "👩‍🏫 先生から" : "🏠 家庭から"}
-                                {sec.date && <span className="font-normal ml-1 opacity-70">（{sec.date.slice(5).replace("-", "/")}）</span>}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const updated: EntrySection[] = doc.sections!.map((s, i) =>
-                                    i === si ? { ...s, author: s.author === "teacher" ? "parent" : "teacher" } : s
-                                  );
-                                  onUpdateDocMeta(doc.id, { sections: updated });
-                                }}
-                                className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${sec.author === "teacher" ? "border-emerald-300 text-emerald-700 hover:bg-emerald-100" : "border-amber-300 text-amber-700 hover:bg-amber-100"}`}
-                              >
-                                入れ替え
-                              </button>
+                        {/* 日付ごとにグループ化して表示 */}
+                        {(() => {
+                          const dateGroups: { date: string; sections: { sec: EntrySection; si: number }[] }[] = [];
+                          doc.sections.forEach((sec, si) => {
+                            const d = sec.date ?? "日付不明";
+                            const g = dateGroups.find((g) => g.date === d);
+                            if (g) g.sections.push({ sec, si });
+                            else dateGroups.push({ date: d, sections: [{ sec, si }] });
+                          });
+                          return dateGroups.map((group) => (
+                            <div key={group.date} className="space-y-1.5">
+                              {/* 日付ヘッダー */}
+                              <div className="text-[11px] font-bold text-indigo-600 border-b border-indigo-100 pb-0.5">
+                                {group.date !== "日付不明"
+                                  ? `${Number(group.date.slice(5, 7))}月${Number(group.date.slice(8, 10))}日`
+                                  : "日付不明"}
+                              </div>
+                              {group.sections.map(({ sec, si }) => (
+                                <div key={si} className={`rounded-lg p-2.5 border text-xs space-y-1 ${sec.author === "teacher" ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"}`}>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className={`font-bold ${sec.author === "teacher" ? "text-emerald-700" : "text-amber-700"}`}>
+                                      {sec.author === "teacher" ? "👩‍🏫 先生から" : "🏠 家庭から"}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const updated: EntrySection[] = doc.sections!.map((s, i) =>
+                                          i === si ? { ...s, author: s.author === "teacher" ? "parent" : "teacher" } : s
+                                        );
+                                        onUpdateDocMeta(doc.id, { sections: updated });
+                                      }}
+                                      className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${sec.author === "teacher" ? "border-emerald-300 text-emerald-700 hover:bg-emerald-100" : "border-amber-300 text-amber-700 hover:bg-amber-100"}`}
+                                    >
+                                      入れ替え
+                                    </button>
+                                  </div>
+                                  {(() => {
+                                    const key = `${doc.id}-${si}`;
+                                    const isExp = !!expandedSections[key];
+                                    const needsToggle = sec.text.length > 120 || sec.text.split("\n").length > 3;
+                                    return (
+                                      <>
+                                        <p className={`text-slate-600 leading-relaxed whitespace-pre-wrap ${!isExp && needsToggle ? "line-clamp-3" : ""}`}>{sec.text}</p>
+                                        {needsToggle && (
+                                          <button type="button" onClick={() => toggleSectionExpand(key)}
+                                            className="text-[10px] font-bold text-indigo-600 mt-0.5">
+                                            {isExp ? "▲ 折りたたむ" : "▼ 全文を表示"}
+                                          </button>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              ))}
                             </div>
-                            <p className="text-slate-600 leading-relaxed line-clamp-3">{sec.text}</p>
-                          </div>
-                        ))}
+                          ));
+                        })()}
                       </div>
                     )}
 

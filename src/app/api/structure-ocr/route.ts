@@ -2,16 +2,50 @@ import { NextResponse } from "next/server";
 import { analyzeAndStructurizeOcrText } from "@/app/ocrStructurizer";
 import { extractTodoDrafts } from "@/lib/ocrTodoExtractor";
 
+// 過去の修正ペア群から単語レベルの補正マップを生成
+function buildWordCorrections(corrections: { from: string; to: string }[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const { from, to } of corrections) {
+    // 両テキストをトークン（連続した文字列）に分割して差分を取る
+    const fromTokens = from.match(/[\u3040-\u9FFF\uFF00-\uFFEF\w]+/g) ?? [];
+    const toTokens = to.match(/[\u3040-\u9FFF\uFF00-\uFFEF\w]+/g) ?? [];
+    if (fromTokens.length !== toTokens.length) continue;
+    for (let i = 0; i < fromTokens.length; i++) {
+      if (fromTokens[i] !== toTokens[i] && fromTokens[i].length >= 2) {
+        map.set(fromTokens[i], toTokens[i]);
+      }
+    }
+  }
+  return map;
+}
+
+function applyWordCorrections(text: string, corrections: Map<string, string>): string {
+  let result = text;
+  for (const [from, to] of corrections) {
+    result = result.split(from).join(to);
+  }
+  return result;
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
       rawOcrText?: unknown;
       categoryName?: unknown;
+      corrections?: unknown;
     };
 
-    const rawOcrText = typeof body.rawOcrText === "string" ? body.rawOcrText : "";
+    const rawOcrTextRaw = typeof body.rawOcrText === "string" ? body.rawOcrText : "";
     const categoryName =
       typeof body.categoryName === "string" ? body.categoryName : "未分類";
+
+    // 過去の修正補正を適用（from→toの置換）
+    const corrections = Array.isArray(body.corrections)
+      ? (body.corrections as { from: string; to: string }[])
+      : [];
+    // シンプルな単語レベル補正：過去の修正ペアから共通する語句の置換を抽出して適用
+    const wordCorrections = buildWordCorrections(corrections);
+    const rawOcrText = applyWordCorrections(rawOcrTextRaw, wordCorrections);
 
     if (!rawOcrText.trim()) {
       return NextResponse.json(

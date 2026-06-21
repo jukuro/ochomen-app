@@ -18,6 +18,8 @@ export interface Todo {
   reason?: string;
   /** やることリストから非表示（カレンダーには残す）。行事の不要分など */
   hiddenFromList?: boolean;
+  /** 自分が参加・関係するとユーザーが手動マークした予定 */
+  markedByUser?: boolean;
 }
 
 export type TodoAssignee = string;
@@ -61,6 +63,8 @@ export interface EntrySection {
   /** YYYY-MM-DD。複数日ある場合の日付ラベル */
   date?: string;
   text: string;
+  /** AIが生成した内容の要約タイトル */
+  title?: string;
 }
 
 export interface Entry {
@@ -85,7 +89,7 @@ export interface Child {
   dotColor: string;
 }
 
-export type Screen = "home" | "timeline" | "shopping" | "calendar";
+export type Screen = "home" | "timeline" | "shopping" | "calendar" | "ochomen";
 
 /** 撮影した1ページ分 */
 export interface CapturePage {
