@@ -56,6 +56,8 @@ import { BatchScanModal } from "@/components/BatchScanModal";
 import { SettingsModal } from "@/components/SettingsModal";
 import { NotificationBootstrap } from "@/components/NotificationBootstrap";
 import { PwaInstallBootstrap } from "@/components/PwaInstallBootstrap";
+import { AddToHomeScreenInvite } from "@/components/AddToHomeScreenInvite";
+import { shouldInviteInstall, getDeferredInstallPrompt, triggerPwaInstall } from "@/lib/pwaInstall";
 import { CalendarSyncBootstrap } from "@/components/CalendarSyncBootstrap";
 import {
   DEFAULT_NOTIFICATION_PREFS,
@@ -173,6 +175,7 @@ export default function App() {
   const [viewModes, setViewModes] = useState<Record<string, "ocr" | "image">>({});
 
   const [isScanModalOpen, setIsScanModalOpen] = useState(false);
+  const [showInstallInvite, setShowInstallInvite] = useState(false);
   const [isBatchOpen, setIsBatchOpen] = useState(false);
   const [captureDocs, setCaptureDocs] = useState<CaptureDoc[]>([]);
   const [batchProcessing, setBatchProcessing] = useState(false);
@@ -549,6 +552,22 @@ export default function App() {
           await ensureFamily("ユーザー");
           const remote = await pullFromSupabase();
           if (remote) applyCloudRemoteRef.current(remote);
+          // 実際のログイン操作時のみ「ホーム画面に追加」を促す（セッション自動復元では出さない）
+          if (event === "SIGNED_IN" && shouldInviteInstall()) {
+            window.setTimeout(async () => {
+              if (cancelled || !shouldInviteInstall()) return;
+              // OS の追加ダイアログを直接開けるなら自動で開く（ユーザーは「追加」を1回押すだけ）
+              if (getDeferredInstallPrompt()) {
+                const outcome = await triggerPwaInstall();
+                if (outcome === "accepted") {
+                  showToast("ホーム画面に追加しました 🎉");
+                  return;
+                }
+                // dismissed / 失敗時は案内モーダルにフォールバック
+              }
+              if (!cancelled) setShowInstallInvite(true);
+            }, 1200);
+          }
         }
       });
       return () => {
@@ -3631,6 +3650,12 @@ export default function App() {
         />
 
         <PwaInstallBootstrap />
+
+        <AddToHomeScreenInvite
+          open={showInstallInvite}
+          onClose={() => setShowInstallInvite(false)}
+          onToast={showToast}
+        />
 
         <CalendarSyncBootstrap
           active={hydrated && !showOnboarding}
