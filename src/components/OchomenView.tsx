@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft, X, Edit, Check } from "lucide-react";
 import type { Entry, EntrySection, Child } from "@/lib/types";
 import { generateSectionTitle } from "@/lib/sectionTitle";
@@ -18,9 +19,13 @@ interface FlatSection {
 interface OchomenViewProps {
   entries: Entry[];
   childProfiles: Child[];
-  onClose: () => void;
+  /** 未指定時は思い出タブ内の埋め込み表示（戻るボタンなし） */
+  onClose?: () => void;
   /** セクション内容を更新する。親(page.tsx)のonUpdateEntryをラップして渡す */
   onUpdateSection: (entryId: string, sectionIndex: number, patch: Partial<EntrySection>) => void;
+  /** 年表などから特定セクションを開く */
+  initialFocus?: { entryId: string; sectionIndex: number } | null;
+  onInitialFocusHandled?: () => void;
 }
 
 function formatDisplayDate(dateStr: string): string {
@@ -39,7 +44,15 @@ function storeCorrection(originalText: string, correctedText: string) {
   } catch { /* ignore */ }
 }
 
-export function OchomenView({ entries, childProfiles, onClose, onUpdateSection }: OchomenViewProps) {
+export function OchomenView({ entries, childProfiles, onClose, onUpdateSection, initialFocus, onInitialFocusHandled }: OchomenViewProps) {
+  const embedded = !onClose;
+  const shellClass = embedded
+    ? "flex flex-col flex-1 min-h-0 bg-white"
+    : "fixed inset-0 z-50 bg-white flex flex-col";
+  const shellStyle = embedded
+    ? undefined
+    : { paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" };
+
   const [selectedFlat, setSelectedFlat] = useState<FlatSection | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState("");
@@ -86,16 +99,46 @@ export function OchomenView({ entries, childProfiles, onClose, onUpdateSection }
     setSelectedFlat((prev) => prev ? { ...prev, section: { ...prev.section, text: editText, title: newTitle } } : null);
   };
 
+  const closeDetail = () => {
+    setSelectedFlat(null);
+    setIsEditing(false);
+    setIsFullscreenEdit(false);
+  };
+
+  const openDetail = (flat: FlatSection) => {
+    setSelectedFlat(flat);
+    setIsEditing(false);
+    setIsFullscreenEdit(false);
+  };
+
+  useEffect(() => {
+    if (!initialFocus) return;
+    const flat = allSections.find(
+      (f) => f.entryId === initialFocus.entryId && f.sectionIndex === initialFocus.sectionIndex
+    );
+    if (flat) openDetail(flat);
+    onInitialFocusHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialFocus の変化時のみ
+  }, [initialFocus]);
+
+  const listHeader = (
+    <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 bg-white flex-shrink-0">
+      {onClose ? (
+        <button type="button" onClick={onClose} className="text-teal-600 font-bold flex items-center gap-1 text-sm active:scale-95 transition">
+          <ChevronLeft size={18} /> 戻る
+        </button>
+      ) : (
+        <div className="w-12" />
+      )}
+      <span className="flex-1 text-center font-bold text-slate-800">📖 お帳面</span>
+      <span className="text-xs text-slate-400 w-12 text-right">{allSections.length > 0 ? `${allSections.length}件` : ""}</span>
+    </div>
+  );
+
   if (allSections.length === 0) {
     return (
-      <div className="fixed inset-0 z-50 bg-white flex flex-col" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100">
-          <button type="button" onClick={onClose} className="text-teal-600 font-bold flex items-center gap-1 text-sm active:scale-95 transition">
-            <ChevronLeft size={18} /> 戻る
-          </button>
-          <span className="flex-1 text-center font-bold text-slate-800">📖 お帳面</span>
-          <div className="w-12" />
-        </div>
+      <div className={shellClass} style={shellStyle}>
+        {listHeader}
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400 px-6 text-center">
           <span className="text-5xl">📖</span>
           <p className="text-sm font-bold text-slate-600">お帳面の記録がまだありません</p>
@@ -106,14 +149,8 @@ export function OchomenView({ entries, childProfiles, onClose, onUpdateSection }
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-white flex flex-col" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 bg-white flex-shrink-0">
-        <button type="button" onClick={onClose} className="text-teal-600 font-bold flex items-center gap-1 text-sm active:scale-95 transition">
-          <ChevronLeft size={18} /> 戻る
-        </button>
-        <span className="flex-1 text-center font-bold text-slate-800">📖 お帳面</span>
-        <span className="text-xs text-slate-400 w-12 text-right">{allSections.length}件</span>
-      </div>
+    <div className={shellClass} style={shellStyle}>
+      {listHeader}
 
       <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
         {allSections.map((flat, idx) => {
@@ -124,7 +161,7 @@ export function OchomenView({ entries, childProfiles, onClose, onUpdateSection }
           const names = childName(childIds);
 
           return (
-            <button key={idx} type="button" onClick={() => { setSelectedFlat(flat); setIsEditing(false); }}
+            <button key={idx} type="button" onClick={() => openDetail(flat)}
               className="w-full text-left px-4 py-3 hover:bg-slate-50 active:bg-slate-100 transition flex gap-3 items-start">
               <div className={`flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm mt-0.5 ${isTeacher ? "bg-emerald-100" : "bg-amber-100"}`}>
                 {isTeacher ? "👩‍🏫" : "🏠"}
@@ -147,112 +184,167 @@ export function OchomenView({ entries, childProfiles, onClose, onUpdateSection }
         })}
       </div>
 
-      {/* 詳細・編集モーダル */}
-      {selectedFlat && (
-        <div className="fixed inset-0 z-[60] bg-white flex flex-col" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 flex-shrink-0">
-            <button type="button" onClick={() => { setSelectedFlat(null); setIsEditing(false); }}
-              className="text-teal-600 font-bold flex items-center gap-1 text-sm active:scale-95 transition">
-              <ChevronLeft size={18} /> 一覧
-            </button>
-            <span className="flex-1 text-center text-sm font-bold text-slate-700 truncate">
-              {selectedFlat.section.title ?? generateSectionTitle(selectedFlat.section.text)}
-            </span>
-            {!isEditing ? (
-              <button type="button" onClick={() => startEdit(selectedFlat)}
-                className="flex items-center gap-1 text-xs text-teal-600 font-bold px-2 py-1 rounded-lg border border-teal-200 bg-teal-50 active:scale-95 transition">
-                <Edit size={12} /> 編集
-              </button>
-            ) : (
-              <button type="button" onClick={() => saveEdit(selectedFlat)}
-                className="flex items-center gap-1 text-xs text-white font-bold px-2 py-1 rounded-lg bg-teal-600 active:scale-95 transition">
-                <Check size={12} /> 保存
-              </button>
-            )}
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-bold text-slate-500">{formatDisplayDate(selectedFlat.sortDate)}</span>
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${selectedFlat.section.author === "teacher" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                {selectedFlat.section.author === "teacher" ? "👩‍🏫 先生から" : "🏠 家庭から"}
+      {selectedFlat &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] bg-white flex flex-col"
+            style={{
+              paddingTop: "env(safe-area-inset-top)",
+              paddingBottom: "env(safe-area-inset-bottom)",
+            }}
+          >
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 flex-shrink-0">
+              <div className="w-10 flex-shrink-0" />
+              <span className="flex-1 text-center text-sm font-bold text-slate-800 truncate px-1">
+                {selectedFlat.section.title ?? generateSectionTitle(selectedFlat.section.text)}
               </span>
-              {childName(selectedFlat.childIds) && (
-                <span className="text-xs text-slate-400">{childName(selectedFlat.childIds)}</span>
+              {!isEditing ? (
+                <button
+                  type="button"
+                  onClick={() => startEdit(selectedFlat)}
+                  className="flex items-center gap-1 text-xs text-teal-600 font-bold px-2 py-1.5 rounded-lg border border-teal-200 bg-teal-50 active:scale-95 transition flex-shrink-0"
+                >
+                  <Edit size={12} /> 編集
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => saveEdit(selectedFlat)}
+                  className="flex items-center gap-1 text-xs text-white font-bold px-2 py-1.5 rounded-lg bg-teal-600 active:scale-95 transition flex-shrink-0"
+                >
+                  <Check size={12} /> 保存
+                </button>
               )}
             </div>
 
-            {!isEditing ? (
-              <>
-                <h2 className="text-base font-bold text-slate-800">
-                  {selectedFlat.section.title ?? generateSectionTitle(selectedFlat.section.text)}
-                </h2>
-                <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap bg-slate-50 rounded-xl p-4 border border-slate-100">
-                  {selectedFlat.section.text}
-                </div>
-              </>
-            ) : (
-              <>
-                {/* タイトル編集 */}
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 block mb-1">タイトル</label>
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white outline-none focus:border-teal-400"
-                    placeholder="タイトルを入力..."
-                  />
-                </div>
-                {/* 本文編集 */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] font-bold text-slate-400">本文</label>
-                    <button type="button" onClick={() => setIsFullscreenEdit(true)}
-                      className="text-[10px] text-teal-600 font-bold px-2 py-0.5 rounded border border-teal-200 bg-teal-50">
-                      全画面で編集
-                    </button>
+            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 min-h-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-slate-500">{formatDisplayDate(selectedFlat.sortDate)}</span>
+                <span
+                  className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                    selectedFlat.section.author === "teacher"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-amber-100 text-amber-700"
+                  }`}
+                >
+                  {selectedFlat.section.author === "teacher" ? "👩‍🏫 先生から" : "🏠 家庭から"}
+                </span>
+                {childName(selectedFlat.childIds) && (
+                  <span className="text-xs text-slate-400">{childName(selectedFlat.childIds)}</span>
+                )}
+              </div>
+
+              {!isEditing ? (
+                <>
+                  <h2 className="text-lg font-bold text-slate-800 leading-snug">
+                    {selectedFlat.section.title ?? generateSectionTitle(selectedFlat.section.text)}
+                  </h2>
+                  <div className="text-base text-slate-700 leading-relaxed whitespace-pre-wrap bg-slate-50 rounded-xl p-4 border border-slate-100">
+                    {selectedFlat.section.text}
                   </div>
-                  <textarea
-                    value={editText}
-                    onChange={(e) => setEditText(e.target.value)}
-                    onFocus={() => setIsFullscreenEdit(true)}
-                    rows={8}
-                    className="w-full border border-slate-200 rounded-lg p-3 text-sm text-slate-800 bg-white resize-none outline-none focus:border-teal-400 leading-relaxed"
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400">
-                  💡 修正内容は次回スキャン時に自動で反映されます（単語補正の学習）
-                </p>
-              </>
-            )}
-            <p className="text-[10px] text-slate-300">スキャン元: {selectedFlat.entryTitle}</p>
-          </div>
-        </div>
-      )}
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">タイトル</label>
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white outline-none focus:border-teal-400"
+                      placeholder="タイトルを入力..."
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-bold text-slate-400">本文</label>
+                      <button
+                        type="button"
+                        onClick={() => setIsFullscreenEdit(true)}
+                        className="text-[10px] text-teal-600 font-bold px-2 py-0.5 rounded border border-teal-200 bg-teal-50"
+                      >
+                        全画面で編集
+                      </button>
+                    </div>
+                    <textarea
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                      onFocus={() => setIsFullscreenEdit(true)}
+                      rows={8}
+                      className="w-full border border-slate-200 rounded-lg p-3 text-sm text-slate-800 bg-white resize-none outline-none focus:border-teal-400 leading-relaxed"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    💡 修正内容は次回スキャン時に自動で反映されます（単語補正の学習）
+                  </p>
+                </>
+              )}
+              <p className="text-[10px] text-slate-300 pb-2">スキャン元: {selectedFlat.entryTitle}</p>
+            </div>
+
+            <div
+              className="flex-shrink-0 border-t border-slate-100 bg-white px-4 py-3"
+              style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}
+            >
+              <button
+                type="button"
+                onClick={closeDetail}
+                className="w-full py-3.5 rounded-2xl bg-teal-600 text-white font-bold text-sm flex items-center justify-center gap-1 active:scale-[0.98] transition"
+              >
+                <ChevronLeft size={18} />
+                一覧に戻る
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* 全画面テキスト編集 */}
-      {isFullscreenEdit && selectedFlat && (
-        <div className="fixed inset-0 z-[70] bg-white flex flex-col" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 flex-shrink-0">
-            <button type="button" onClick={() => setIsFullscreenEdit(false)}
-              className="text-teal-600 font-bold flex items-center gap-1 text-sm">
-              <ChevronLeft size={18} /> 戻る
-            </button>
-            <span className="flex-1 text-center text-sm font-bold text-slate-700">本文を編集</span>
-            <button type="button" onClick={() => { setIsFullscreenEdit(false); saveEdit(selectedFlat); }}
-              className="px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-bold">
-              保存
-            </button>
-          </div>
-          <textarea
-            autoFocus
-            value={editText}
-            onChange={(e) => setEditText(e.target.value)}
-            className="flex-1 w-full p-4 text-sm text-slate-800 bg-white resize-none outline-none leading-relaxed"
-          />
-        </div>
-      )}
+      {isFullscreenEdit && selectedFlat &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[110] bg-white flex flex-col"
+            style={{
+              paddingTop: "env(safe-area-inset-top)",
+              paddingBottom: "env(safe-area-inset-bottom)",
+            }}
+          >
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 flex-shrink-0">
+              <span className="flex-1 text-center text-sm font-bold text-slate-700">本文を編集</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFullscreenEdit(false);
+                  saveEdit(selectedFlat);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-bold"
+              >
+                保存
+              </button>
+            </div>
+            <textarea
+              autoFocus
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              className="flex-1 w-full p-4 text-sm text-slate-800 bg-white resize-none outline-none leading-relaxed min-h-0"
+            />
+            <div
+              className="flex-shrink-0 border-t border-slate-100 px-4 py-3"
+              style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}
+            >
+              <button
+                type="button"
+                onClick={() => setIsFullscreenEdit(false)}
+                className="w-full py-3 rounded-2xl border border-slate-200 text-slate-700 font-bold text-sm active:scale-[0.98] transition"
+              >
+                編集を閉じる
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

@@ -1,13 +1,17 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { Camera, Loader2, Sparkles, Trash2, X, CheckCircle2, AlertCircle, Clock, Plus, RotateCw } from "lucide-react";
 import type { Child, CaptureDoc, CapturePage, EntrySection } from "@/lib/types";
-import { compressAndRotate } from "@/lib/imageCompress";
+import { OcrSkeleton } from "@/components/OcrSkeleton";
+import { FullScreenScanCapture } from "@/components/FullScreenScanCapture";
+import { processScanFile } from "@/lib/documentTrim";
 import { createLocalId } from "@/lib/ids";
+import type { UserProgress } from "@/lib/userProgress";
 
 interface BatchScanModalProps {
   open: boolean;
+  userProgress: UserProgress;
   childrenProfiles: Child[];
   categories: string[];
   targetChildIds: string[];
@@ -28,6 +32,7 @@ interface BatchScanModalProps {
 
 export function BatchScanModal({
   open,
+  userProgress,
   childrenProfiles,
   categories,
   targetChildIds,
@@ -57,6 +62,11 @@ export function BatchScanModal({
   const [previewPage, setPreviewPage] = useState<{ docId: string; pageId: string } | null>(null);
   // 書類の種類（スコープ）
   const [docScope, setDocScope] = useState<"child" | "school" | "family" | "community">("school");
+  const [phase, setPhase] = useState<"capture" | "review">("capture");
+
+  useEffect(() => {
+    if (open) setPhase("capture");
+  }, [open]);
 
   if (!open) return null;
 
@@ -74,8 +84,8 @@ export function BatchScanModal({
     try {
       const pages: CapturePage[] = [];
       for (const file of files) {
-        const { base64, mimeType, previewUrl } = await compressAndRotate(file, 0);
-        pages.push({ id: createLocalId("page"), base64, mimeType, previewUrl });
+        const processed = await processScanFile(file);
+        pages.push({ id: createLocalId("page"), ...processed });
       }
       if (targetDocRef.current) {
         // 既存書類にページ追加（裏面など）
@@ -102,6 +112,26 @@ export function BatchScanModal({
   const doneCount = docs.filter((d) => d.status === "done").length;
   const showConfirmList = confirmMode && doneCount > 0;
   const readyToProcess = pendingCount + errorCount;
+  const allCapturedPages = docs.flatMap((d) => d.pages);
+
+  if (phase === "capture") {
+    return (
+      <FullScreenScanCapture
+        userProgress={userProgress}
+        capturedPages={allCapturedPages}
+        onAddPages={(pages) => {
+          if (targetDocRef.current) {
+            pages.forEach((p) => onAddPageToDoc(targetDocRef.current!, p));
+            targetDocRef.current = null;
+          } else {
+            pages.forEach((p) => onAddNewDoc([p]));
+          }
+        }}
+        onDone={() => setPhase("review")}
+        onCancel={onClose}
+      />
+    );
+  }
 
   return (
     <div className="absolute inset-0 bg-black/50 flex items-end z-50">
@@ -203,13 +233,17 @@ export function BatchScanModal({
           </div>
         )}
 
+        {!showConfirmList && isProcessing && (
+          <OcrSkeleton message="プリントを読み解いています" compact userProgress={userProgress} mascotAnim="eat" />
+        )}
+
         {/* 撮影ボタン（新しい書類） */}
-        {!showConfirmList && (
+        {!showConfirmList && !isProcessing && (
           <button
             type="button"
             onClick={() => triggerCapture(null)}
             disabled={isCompressing || isProcessing}
-            className="w-full py-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold flex items-center justify-center gap-2 transition active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+            className="w-full py-4 rounded-2xl text-white text-sm font-bold flex items-center justify-center gap-2 transition active:scale-95 disabled:opacity-40 app-primary-cta"
           >
             {isCompressing ? <Loader2 size={18} className="animate-spin" /> : <Camera size={18} />}
             {docs.length === 0 ? "撮影する" : "＋ 別の書類を撮る"}
@@ -233,7 +267,7 @@ export function BatchScanModal({
                       </span>
                     )}
                     {doc.status === "processing" && (
-                      <span className="text-teal-600 flex items-center gap-0.5"><Loader2 size={11} className="animate-spin" /> 解析中</span>
+                      <span className="flex items-center gap-1" style={{ color: "var(--color-primary)" }}>読み解き中…</span>
                     )}
                     {doc.status === "done" && (
                       <span className="text-emerald-600 flex items-center gap-0.5"><CheckCircle2 size={11} /> 完了</span>
@@ -308,6 +342,11 @@ export function BatchScanModal({
                         <p className="text-[11px] font-bold text-indigo-700 flex items-center gap-1">
                           📖 お帳面モード — 先生と保護者の区別を確認
                         </p>
+                        {new Set(doc.sections.map((s) => s.date ?? "日付不明")).size > 1 && (
+                          <p className="text-[10px] text-indigo-600 bg-white/70 rounded-lg px-2 py-1.5">
+                            複数日が含まれています。登録時に日付ごとに分けて保存されます。
+                          </p>
+                        )}
                         {/* 日付ごとにグループ化して表示 */}
                         {(() => {
                           const dateGroups: { date: string; sections: { sec: EntrySection; si: number }[] }[] = [];
@@ -387,10 +426,10 @@ export function BatchScanModal({
               type="button"
               onClick={() => onProcess(true)}
               disabled={readyToProcess === 0 || isProcessing}
-              className="w-full py-3 rounded-xl bg-teal-600 text-white text-sm font-bold flex items-center justify-center gap-1.5 disabled:bg-slate-200 disabled:text-slate-400"
+              className="w-full py-3 rounded-2xl text-white text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-40 app-primary-cta"
             >
               {isProcessing
-                ? <><Loader2 size={15} className="animate-spin" /> 解析中...</>
+                ? <>読み解いています…</>
                 : errorCount > 0 && pendingCount === 0
                   ? <><RotateCw size={15} /> 失敗分を再試行（{errorCount}件）</>
                   : <><Sparkles size={15} /> おまかせで登録（{readyToProcess}件）</>

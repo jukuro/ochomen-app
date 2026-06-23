@@ -20,6 +20,10 @@ export interface Todo {
   hiddenFromList?: boolean;
   /** 自分が参加・関係するとユーザーが手動マークした予定 */
   markedByUser?: boolean;
+  /** Google Calendar 連携イベント ID */
+  googleEventId?: string;
+  /** Google から取り込んだ予定 */
+  importedFromGoogle?: boolean;
 }
 
 export type TodoAssignee = string;
@@ -50,6 +54,20 @@ export interface Diary {
   imageUrl?: string;
   stretchLevel?: "raw" | "light" | "deep";
   tags?: string[];
+  /** じぃじ・ばぁば共有画面に表示するか（既定: 非共有） */
+  shareWithGrandparents?: boolean;
+}
+
+/** お絵描きアルバムの1作品 */
+export interface Artwork {
+  id: string;
+  childId: string;
+  date: string;
+  imageUrl: string;
+  title?: string;
+  caption?: string;
+  /** じぃじ・ばぁば共有画面に表示するか（既定: 非共有） */
+  shareWithGrandparents?: boolean;
 }
 
 export interface OcrAnalysisResult {
@@ -87,9 +105,23 @@ export interface Child {
   avatar: string;
   color: string;
   dotColor: string;
+  /** YYYY-MM-DD */
+  birthDate?: string;
+  /** 好きなもの・性格など短いメモ */
+  profileNote?: string;
 }
 
-export type Screen = "home" | "timeline" | "shopping" | "calendar" | "ochomen";
+export type Screen =
+  | "home"
+  | "memories"
+  | "calendar"
+  | "shopping"
+  | "family"
+  | "grandparents"
+  | "book_order";
+
+/** 思い出タブ内のサブビュー（書類 / お帳面 / 日記） */
+export type MemorySubview = "documents" | "ochomen" | "diary" | "art" | "timeline";
 
 /** 撮影した1ページ分 */
 export interface CapturePage {

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { FileText, Image as ImageIcon, Edit, Trash2, RefreshCw, X, ZoomIn, ChevronDown, ChevronUp, CalendarDays, ShoppingBag, ClipboardList, Bell, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import type { Child, Entry, EntrySection } from "@/lib/types";
 import { formatRelativeDate, formatShortDate } from "@/lib/dates";
@@ -343,6 +344,10 @@ interface EntryCardProps {
   /** 「元の書類を見る」から遷移してきた場合、タスクへ戻るコールバックとタスク名 */
   onBackToTodo?: () => void;
   backToTodoLabel?: string;
+  /** 全画面を閉じたとき（親の openEntryId 解除など） */
+  onClose?: () => void;
+  /** 全画面を開くとき（他カードを閉じるため親で openEntryId を設定） */
+  onOpen?: () => void;
 }
 
 // ---- お帳面セクション表示 ----------------------------------------
@@ -410,6 +415,8 @@ export function EntryCard({
   onRescan,
   onBackToTodo,
   backToTodoLabel,
+  onClose,
+  onOpen,
 }: EntryCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
@@ -426,6 +433,15 @@ export function EntryCard({
     setConfirmState({ open: true, message, detail, onConfirm });
   const closeConfirm = () => setConfirmState((s) => ({ ...s, open: false }));
 
+  const closeExpanded = () => {
+    setIsExpanded(false);
+    setIsEditing(false);
+    setIsFullscreenEdit(false);
+    setOcrFullscreen(false);
+    setLightboxOpen(false);
+    onClose?.();
+  };
+
   // 検索から開いた場合：展開＋全画面＋最初のマッチへスクロール
   useEffect(() => {
     if (forceExpand) {
@@ -438,6 +454,9 @@ export function EntryCard({
           if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
         }, 350);
       }
+    } else {
+      setIsExpanded(false);
+      setOcrFullscreen(false);
     }
   }, [forceExpand, highlightQuery, entry.id]);
 
@@ -469,8 +488,7 @@ export function EntryCard({
     const dy = e.changedTouches[0].clientY - touchStartY.current;
     // 上端付近からの大きめの下スワイプで閉じる
     if (dy > 90 && touchStartY.current < 160) {
-      setIsEditing(false);
-      setIsExpanded(false);
+      closeExpanded();
     }
     touchStartY.current = null;
   };
@@ -502,8 +520,9 @@ export function EntryCard({
         className="flex items-center gap-2 p-3 cursor-pointer select-none"
         onClick={() => {
           if (!isEditing) {
-            setIsExpanded((v) => !v);
             onMarkRead(entry.id);
+            if (isExpanded) closeExpanded();
+            else onOpen?.();
           }
         }}
       >
@@ -550,17 +569,33 @@ export function EntryCard({
       </div>
 
       {/* 展開時：書類を全画面で表示 */}
-      {isExpanded && (
+      {isExpanded &&
+        typeof document !== "undefined" &&
+        createPortal(
       <div
-        className="fixed inset-0 z-40 bg-white flex flex-col"
+        className="fixed inset-0 z-[100] bg-white flex flex-col"
         style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-      {/* 全画面ヘッダー（情報のみ、操作ボタンは下部） */}
+      {/* 全画面ヘッダー */}
       <div className="flex flex-col gap-1 px-3 py-2 border-b border-slate-100 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="w-9 flex-shrink-0" />
+          <p className="flex-1 text-center text-sm font-bold text-slate-800 truncate px-1">
+            {entry.title || entry.category}
+          </p>
+          <button
+            type="button"
+            onClick={closeExpanded}
+            aria-label="閉じる"
+            className="w-9 h-9 rounded-xl flex items-center justify-center text-slate-500 bg-slate-100 active:scale-95 transition flex-shrink-0"
+          >
+            <X size={18} />
+          </button>
+        </div>
         {/* スワイプ用ハンドル */}
-        <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto -mt-0.5 mb-0.5" />
+        <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto mb-0.5" />
         {/* タスクに戻るバー（元の書類を見る経由の場合のみ） */}
         {onBackToTodo && (
           <button
@@ -998,67 +1033,79 @@ export function EntryCard({
 
       </div>
       {/* 下部固定ツールバー */}
-      <div className="flex-shrink-0 border-t border-slate-100 bg-white px-3 py-2 flex items-center gap-2" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          onClick={() => { setIsEditing(false); setIsExpanded(false); }}
-          className="flex items-center gap-0.5 text-sm font-bold text-teal-600 px-3 py-2 rounded-xl bg-teal-50 active:scale-95 transition flex-shrink-0"
-        >
-          <ChevronLeft size={16} /> 戻る
-        </button>
-        {/* prev / next ナビゲーション */}
-        {(onPrev || onNext) && (
-          <div className="flex items-center gap-1 flex-shrink-0">
+      <div
+        className="flex-shrink-0 border-t border-slate-100 bg-white px-3 py-3 space-y-2"
+        style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          {(onPrev || onNext) && (
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                type="button"
+                disabled={!onPrev}
+                onClick={onPrev}
+                className="w-9 h-9 rounded-xl flex items-center justify-center bg-slate-100 text-slate-600 disabled:opacity-30 active:scale-95 transition"
+                aria-label="前の書類"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              {entryIndex !== undefined && entryTotal !== undefined && (
+                <span className="text-[10px] font-bold text-slate-400 min-w-[2.5rem] text-center">
+                  {entryIndex}/{entryTotal}
+                </span>
+              )}
+              <button
+                type="button"
+                disabled={!onNext}
+                onClick={onNext}
+                className="w-9 h-9 rounded-xl flex items-center justify-center bg-slate-100 text-slate-600 disabled:opacity-30 active:scale-95 transition"
+                aria-label="次の書類"
+              >
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          )}
+          <div className="flex-1" />
+          {onRescan && (
             <button
               type="button"
-              disabled={!onPrev}
-              onClick={onPrev}
-              className="w-9 h-9 rounded-xl flex items-center justify-center bg-slate-100 text-slate-600 disabled:opacity-30 active:scale-95 transition"
-              aria-label="前の書類"
+              onClick={onRescan}
+              className="p-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 active:scale-95 transition"
+              aria-label="再スキャン"
             >
-              <ChevronLeft size={18} />
+              <RefreshCw size={14} />
             </button>
-            <button
-              type="button"
-              disabled={!onNext}
-              onClick={onNext}
-              className="w-9 h-9 rounded-xl flex items-center justify-center bg-slate-100 text-slate-600 disabled:opacity-30 active:scale-95 transition"
-              aria-label="次の書類"
-            >
-              <ChevronRight size={18} />
-            </button>
-          </div>
-        )}
-        <div className="flex-1" />
-        {onRescan && (
+          )}
           <button
             type="button"
-            onClick={onRescan}
-            className="p-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 active:scale-95 transition"
-            aria-label="再スキャン"
+            onClick={() => {
+              const detail = todoCount > 0
+                ? `やること ${todoCount} 件もすべて削除されます。この操作は元に戻せません。`
+                : "この操作は元に戻せません。";
+              openConfirm(
+                `「${entry.category}」（${entry.date}）を削除しますか？`,
+                detail,
+                () => onDeleteEntry(entry.id)
+              );
+            }}
+            className="p-2 rounded-xl border border-red-100 bg-red-50 text-red-500 active:scale-95 transition"
+            aria-label="削除"
           >
-            <RefreshCw size={14} />
+            <Trash2 size={14} />
           </button>
-        )}
+        </div>
         <button
           type="button"
-          onClick={() => {
-            const detail = todoCount > 0
-              ? `やること ${todoCount} 件もすべて削除されます。この操作は元に戻せません。`
-              : "この操作は元に戻せません。";
-            openConfirm(
-              `「${entry.category}」（${entry.date}）を削除しますか？`,
-              detail,
-              () => onDeleteEntry(entry.id)
-            );
-          }}
-          className="p-2 rounded-xl border border-red-100 bg-red-50 text-red-500 active:scale-95 transition"
-          aria-label="削除"
+          onClick={closeExpanded}
+          className="w-full py-3.5 rounded-2xl bg-teal-600 text-white font-bold text-sm flex items-center justify-center gap-1 active:scale-[0.98] transition"
         >
-          <Trash2 size={14} />
+          <ChevronLeft size={18} />
+          一覧に戻る
         </button>
       </div>
-      </div>
+      </div>,
+      document.body
       )}
 
       <ConfirmModal

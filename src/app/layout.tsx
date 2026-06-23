@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP } from "next/font/google";
+import { ReloadRecovery } from "@/components/ReloadRecovery";
 import "./globals.css";
 
 const notoSansJP = Noto_Sans_JP({
@@ -29,7 +30,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#0f766e",
+  themeColor: "#e8826a",
 };
 
 export default function RootLayout({
@@ -39,7 +40,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" className={`${notoSansJP.variable} h-full antialiased`}>
-      <body className="h-full font-sans bg-slate-50 overflow-hidden">{children}</body>
+      <body className="h-full font-sans overflow-hidden">
+        <ReloadRecovery />
+        {children}
+      </body>
     </html>
   );
 }

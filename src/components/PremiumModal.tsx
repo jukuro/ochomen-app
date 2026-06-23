@@ -30,9 +30,12 @@ interface PremiumModalProps {
   currentPlan: PlanId;
   triggerFeature?: string;
   stripeCustomerId?: string;
+  premiumBypassEnabled?: boolean;
   onClose: () => void;
   /** Stripe Checkout 開始後に呼ばれる（Stripe 未設定時は即座に onUpgrade 扱い） */
   onUpgrade: () => void;
+  /** 動作確認用（課金なし）プレミアム有効化 */
+  onBypassUpgrade?: () => void;
 }
 
 const PREMIUM_FEATURES = [
@@ -49,8 +52,10 @@ export function PremiumModal({
   currentPlan,
   triggerFeature,
   stripeCustomerId,
+  premiumBypassEnabled = false,
   onClose,
   onUpgrade,
+  onBypassUpgrade,
 }: PremiumModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -169,11 +174,26 @@ export function PremiumModal({
             >
               無料プランで続ける
             </button>
+            {premiumBypassEnabled && onBypassUpgrade && (
+              <button
+                type="button"
+                onClick={() => {
+                  onBypassUpgrade();
+                  onClose();
+                }}
+                disabled={isLoading}
+                className="w-full py-3 rounded-2xl border border-dashed border-teal-300 bg-teal-50 text-teal-800 text-sm font-bold disabled:opacity-60"
+              >
+                動作確認用にプレミアムを有効化（課金なし）
+              </button>
+            )}
           </div>
         )}
 
         <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-          クレジットカード決済（Stripe）。いつでも解約可能です。
+          {premiumBypassEnabled
+            ? "本番リリース前は「動作確認用」で課金なし試用できます。"
+            : "クレジットカード決済（Stripe）。いつでも解約可能です。"}
         </p>
       </div>
     </div>

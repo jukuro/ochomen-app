@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Edit2, Trash2, X, Cloud, CloudOff, LogIn, LogOut, UserPlus, Loader2 } from "lucide-react";
-import type { Child, Member } from "@/lib/types";
+import type { Child, Member, Entry } from "@/lib/types";
 import { AVATAR_EMOJIS } from "@/lib/emojis";
 import {
   isSupabaseConfigured,
@@ -11,7 +11,19 @@ import {
   signInWithEmail,
   signUpWithEmail,
   signOut,
+  fetchCloudEntryCount,
 } from "@/lib/supabaseSync";
+import { PointsShopSection } from "@/components/PointsShopSection";
+import type { PointsWallet } from "@/lib/pointsShop";
+import type { NotificationPrefs } from "@/lib/notificationPrefs";
+import {
+  getNotificationPermission,
+  requestNotificationPermission,
+} from "@/lib/reminderNotifications";
+import { CalendarSyncSection } from "@/components/CalendarSyncSection";
+import { AddToHomeScreenSection } from "@/components/AddToHomeScreenSection";
+import type { CalendarSyncPrefs, GoogleCalendarTokens } from "@/lib/calendarSyncPrefs";
+import type { PlanId } from "@/components/PremiumModal";
 
 interface SettingsModalProps {
   open: boolean;
@@ -46,6 +58,26 @@ interface SettingsModalProps {
   stripeCustomerId?: string;
   onShowPremium?: () => void;
   onManageSubscription?: () => void;
+  pointsWallet?: PointsWallet;
+  onPointsWalletChange?: (wallet: PointsWallet) => void;
+  onToast?: (message: string, options?: { celebrate?: boolean }) => void;
+  onManualSyncPull?: () => Promise<void>;
+  onManualSyncPush?: () => Promise<void>;
+  onAuthSuccess?: () => Promise<void>;
+  syncableEntryCount?: number;
+  notificationPrefs: NotificationPrefs;
+  onNotificationPrefsChange: (prefs: NotificationPrefs) => void;
+  entries: Entry[];
+  calendarSyncPrefs: CalendarSyncPrefs;
+  googleCalendarTokens: GoogleCalendarTokens | null;
+  googleCalendarConfigured: boolean;
+  appleFeedConfigured: boolean;
+  calendarName?: string;
+  onCalendarSyncPrefsChange: (prefs: CalendarSyncPrefs) => void;
+  onGoogleCalendarTokensChange: (tokens: GoogleCalendarTokens | null) => void;
+  onEntriesChange: (entries: Entry[]) => void;
+  premiumBypassEnabled?: boolean;
+  onSetPlan?: (plan: PlanId) => void;
 }
 
 export function SettingsModal({
@@ -81,8 +113,29 @@ export function SettingsModal({
   stripeCustomerId,
   onShowPremium,
   onManageSubscription,
+  pointsWallet,
+  onPointsWalletChange,
+  onToast,
+  onManualSyncPull,
+  onManualSyncPush,
+  onAuthSuccess,
+  syncableEntryCount = 0,
+  notificationPrefs,
+  onNotificationPrefsChange,
+  entries,
+  calendarSyncPrefs,
+  googleCalendarTokens,
+  googleCalendarConfigured,
+  appleFeedConfigured,
+  calendarName,
+  onCalendarSyncPrefsChange,
+  onGoogleCalendarTokensChange,
+  onEntriesChange,
+  premiumBypassEnabled = false,
+  onSetPlan,
 }: SettingsModalProps) {
   const [avatarPickerFor, setAvatarPickerFor] = useState<string | null>(null);
+  const [syncLoading, setSyncLoading] = useState<"pull" | "push" | null>(null);
 
   // ── 認証状態 ──────────────────────────────────────────────
   const [authEmail, setAuthEmail] = useState("");
@@ -93,6 +146,33 @@ export function SettingsModal({
   const [authError, setAuthError] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [cloudEntryCount, setCloudEntryCount] = useState<number | null>(null);
+
+  const refreshCloudCount = async () => {
+    if (!currentUserEmail) {
+      setCloudEntryCount(null);
+      return;
+    }
+    const count = await fetchCloudEntryCount();
+    setCloudEntryCount(count);
+  };
+
+  const notificationPermission = getNotificationPermission();
+
+  const handleMasterNotificationToggle = async (checked: boolean) => {
+    if (checked && currentPlan !== "premium") {
+      onShowPremium?.();
+      return;
+    }
+    if (checked) {
+      const perm = await requestNotificationPermission();
+      if (perm !== "granted") {
+        onToast?.("通知が許可されませんでした。ブラウザの設定を確認してください");
+        return;
+      }
+    }
+    onNotificationPrefsChange({ ...notificationPrefs, enabled: checked });
+  };
 
   useEffect(() => {
     if (!open || !isSupabaseConfigured) {
@@ -110,6 +190,14 @@ export function SettingsModal({
     return () => listener.subscription.unsubscribe();
   }, [open]);
 
+  useEffect(() => {
+    if (!open || !currentUserEmail) {
+      setCloudEntryCount(null);
+      return;
+    }
+    void refreshCloudCount();
+  }, [open, currentUserEmail]);
+
   const handleAuth = async () => {
     setAuthLoading(true);
     setAuthError(null);
@@ -122,6 +210,9 @@ export function SettingsModal({
       setAuthEmail("");
       setAuthPassword("");
       setAuthDisplayName("");
+      if (onAuthSuccess) {
+        await onAuthSuccess();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setAuthError(
@@ -179,7 +270,7 @@ export function SettingsModal({
               </button>
             )}
           </div>
-          {currentPlan === "premium" && onManageSubscription && (
+          {currentPlan === "premium" && onManageSubscription && !premiumBypassEnabled && (
             <button
               type="button"
               onClick={onManageSubscription}
@@ -187,6 +278,37 @@ export function SettingsModal({
             >
               💳 サブスクリプションを管理・解約
             </button>
+          )}
+          {premiumBypassEnabled && onSetPlan && (
+            <div className="mt-2 space-y-2">
+              <p className="text-[10px] text-teal-700 bg-teal-50 border border-teal-100 rounded-lg px-2.5 py-2 leading-relaxed">
+                動作確認モード: 課金なしでプレミアム機能を試せます
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => onSetPlan("premium")}
+                  className={`py-2.5 rounded-xl text-xs font-bold ${
+                    currentPlan === "premium"
+                      ? "bg-amber-500 text-white"
+                      : "bg-white border border-amber-200 text-amber-700"
+                  }`}
+                >
+                  プレミアム（テスト）
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSetPlan("free")}
+                  className={`py-2.5 rounded-xl text-xs font-bold ${
+                    currentPlan === "free"
+                      ? "bg-slate-600 text-white"
+                      : "bg-white border border-slate-200 text-slate-600"
+                  }`}
+                >
+                  無料に戻す
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
@@ -203,11 +325,14 @@ export function SettingsModal({
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-500 leading-relaxed">
               <p className="font-bold text-slate-600 mb-1">クラウド同期を有効にするには</p>
               <p>
-                <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px]">.env.local</code> に
+                Vercel に
                 <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] mx-1">NEXT_PUBLIC_SUPABASE_URL</code>
                 と
                 <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] mx-1">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
-                を設定してください。
+                を設定し再デプロイしてください。
+              </p>
+              <p className="mt-1.5 text-[10px] text-slate-400">
+                手順: リポジトリ内 <code className="bg-slate-100 px-1 rounded">docs/SUPABASE-SETUP.md</code>
               </p>
             </div>
           )}
@@ -234,8 +359,62 @@ export function SettingsModal({
                 </button>
               </div>
               <p className="text-[10px] text-teal-600 pl-1">
-                ✓ データはリアルタイムでクラウドに同期されています
+                ✓ 変更は自動でクラウドに同期されます
               </p>
+              <p className="text-[10px] text-slate-500 pl-1">
+                この端末の書類: <strong>{syncableEntryCount} 件</strong>
+                {currentUserEmail && (
+                  <>
+                    {" · "}
+                    クラウド:{" "}
+                    <strong>
+                      {cloudEntryCount === null ? "—" : `${cloudEntryCount} 件`}
+                    </strong>
+                  </>
+                )}
+              </p>
+              {(onManualSyncPull || onManualSyncPush) && (
+                <div className="flex gap-2 pt-1">
+                  {onManualSyncPull && (
+                    <button
+                      type="button"
+                      disabled={syncLoading !== null}
+                      onClick={async () => {
+                        setSyncLoading("pull");
+                        try {
+                          await onManualSyncPull();
+                          await refreshCloudCount();
+                        } finally {
+                          setSyncLoading(null);
+                        }
+                      }}
+                      className="flex-1 py-2 rounded-xl bg-white border border-teal-200 text-teal-700 text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-50"
+                    >
+                      {syncLoading === "pull" ? <Loader2 size={12} className="animate-spin" /> : null}
+                      クラウドから取り込む
+                    </button>
+                  )}
+                  {onManualSyncPush && (
+                    <button
+                      type="button"
+                      disabled={syncLoading !== null}
+                      onClick={async () => {
+                        setSyncLoading("push");
+                        try {
+                          await onManualSyncPush();
+                          await refreshCloudCount();
+                        } finally {
+                          setSyncLoading(null);
+                        }
+                      }}
+                      className="flex-1 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-50"
+                    >
+                      {syncLoading === "push" ? <Loader2 size={12} className="animate-spin" /> : null}
+                      今すぐクラウドへ送る
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -315,29 +494,109 @@ export function SettingsModal({
           )}
         </div>
 
+        <AddToHomeScreenSection onToast={onToast} />
+
+        {pointsWallet && onPointsWalletChange && onToast && (
+          <PointsShopSection
+            wallet={pointsWallet}
+            onWalletChange={onPointsWalletChange}
+            onToast={onToast}
+          />
+        )}
+
         {/* 基本情報設定 */}
         <div className="space-y-3 border-t border-slate-100 pt-3">
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-            アプリの基本設定
+            通知・リマインダー
+            {currentPlan !== "premium" && (
+              <span className="ml-1 text-[9px] font-normal normal-case text-amber-600">（プレミアム）</span>
+            )}
           </span>
           <div className="space-y-2.5">
             <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-200/50">
               <div>
-                <span className="text-xs font-bold text-slate-700 block">朝の自動リマインダー</span>
-                <span className="text-[9px] text-slate-400">毎朝7時に今日のやること・持ち物を通知</span>
+                <span className="text-xs font-bold text-slate-700 block">ブラウザ通知</span>
+                <span className="text-[9px] text-slate-400">
+                  {notificationPermission === "denied"
+                    ? "ブラウザで通知がブロックされています"
+                    : "期限が近い準備・持ち物をお知らせ"}
+                </span>
               </div>
-              <input type="checkbox" defaultChecked className="accent-teal-600 w-4 h-4" />
+              <input
+                type="checkbox"
+                checked={notificationPrefs.enabled}
+                disabled={notificationPermission === "denied"}
+                onChange={(e) => void handleMasterNotificationToggle(e.target.checked)}
+                className="accent-teal-600 w-4 h-4"
+              />
             </div>
-            
-            <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-200/50">
+
+            {notificationPrefs.enabled && currentPlan === "premium" && (
+              <>
+                <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-200/50">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 block">朝の自動リマインダー</span>
+                    <span className="text-[9px] text-slate-400">
+                      毎朝{notificationPrefs.morningHour}時以降にきょうのやることを通知
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={notificationPrefs.morningEnabled}
+                    onChange={(e) =>
+                      onNotificationPrefsChange({
+                        ...notificationPrefs,
+                        morningEnabled: e.target.checked,
+                      })
+                    }
+                    className="accent-teal-600 w-4 h-4"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-200/50">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 block">期限リマインダー</span>
+                    <span className="text-[9px] text-slate-400">前日・3日前など、設定したタイミングで通知</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={notificationPrefs.taskRemindersEnabled}
+                    onChange={(e) =>
+                      onNotificationPrefsChange({
+                        ...notificationPrefs,
+                        taskRemindersEnabled: e.target.checked,
+                      })
+                    }
+                    className="accent-teal-600 w-4 h-4"
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-200/50 opacity-60">
               <div>
-                <span className="text-xs font-bold text-slate-700 block">LINE通知連携（ファミリー共有）</span>
-                <span className="text-[9px] text-slate-400">アサインされたタスクを各自のLINEに自動通知</span>
+                <span className="text-xs font-bold text-slate-700 block">LINE通知連携</span>
+                <span className="text-[9px] text-slate-400">準備中 — ファミリー共有向け</span>
               </div>
-              <input type="checkbox" defaultChecked className="accent-teal-600 w-4 h-4" />
+              <input type="checkbox" disabled className="accent-teal-600 w-4 h-4" />
             </div>
           </div>
         </div>
+
+        <CalendarSyncSection
+          entries={entries}
+          prefs={calendarSyncPrefs}
+          tokens={googleCalendarTokens}
+          currentPlan={currentPlan}
+          calendarName={calendarName}
+          googleConfigured={googleCalendarConfigured}
+          appleFeedConfigured={appleFeedConfigured}
+          onPrefsChange={onCalendarSyncPrefsChange}
+          onTokensChange={onGoogleCalendarTokensChange}
+          onEntriesChange={onEntriesChange}
+          onShowPremium={onShowPremium}
+          onToast={onToast}
+        />
 
         {/* お子さま */}
         <div className="space-y-2">

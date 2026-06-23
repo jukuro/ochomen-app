@@ -1,5 +1,26 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
+import { updateFamilyPlanByStripeCustomer } from "@/lib/supabaseAdmin";
+
+function stripeCustomerId(
+  customer: string | Stripe.Customer | Stripe.DeletedCustomer | null
+): string | null {
+  if (!customer) return null;
+  if (typeof customer === "string") return customer;
+  if ("deleted" in customer && customer.deleted) return null;
+  return customer.id;
+}
+
+async function setPlanForCustomer(
+  customerId: string | null,
+  plan: "free" | "premium"
+): Promise<void> {
+  if (!customerId) return;
+  const ok = await updateFamilyPlanByStripeCustomer(customerId, plan);
+  if (!ok) {
+    console.warn(`[Stripe webhook] Supabase plan not updated for customer ${customerId}`);
+  }
+}
 
 export async function POST(request: Request) {
   const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
@@ -23,20 +44,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid signature." }, { status: 400 });
   }
 
-  // サブスクリプションのアクティブ化 / 解約
-  // フロントエンドは session_id を使って自分でプランを確認するため
-  // ここでは Supabase が設定されていれば更新するだけ
   switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
-      console.log("Checkout completed, customer:", session.customer, "subscription:", session.subscription);
-      // TODO: Supabase が設定されている場合、families テーブルの plan を "premium" に更新
+      await setPlanForCustomer(stripeCustomerId(session.customer), "premium");
       break;
     }
     case "customer.subscription.deleted": {
       const sub = event.data.object as Stripe.Subscription;
-      console.log("Subscription canceled:", sub.id, "customer:", sub.customer);
-      // TODO: Supabase が設定されている場合、families テーブルの plan を "free" に更新
+      await setPlanForCustomer(stripeCustomerId(sub.customer), "free");
+      break;
+    }
+    case "customer.subscription.updated": {
+      const sub = event.data.object as Stripe.Subscription;
+      const active = sub.status === "active" || sub.status === "trialing";
+      await setPlanForCustomer(stripeCustomerId(sub.customer), active ? "premium" : "free");
       break;
     }
     default:

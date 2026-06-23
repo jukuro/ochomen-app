@@ -3,6 +3,7 @@
   "short_name": "お帳面",
   "description": "保育園のプリントをスキャンして、やること・提出期限を家族で管理",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#0f766e",

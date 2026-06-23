@@ -19,6 +19,7 @@ interface TodoDetailSheetProps {
   onOpenSource: (entryId: string, highlight?: string) => void;
   onUpdateTodo: (todoId: string, updatedFields: Partial<Todo>) => void;
   onDeleteTodo: (todoId: string) => void;
+  onExportCalendar?: (todo: Todo) => void;
 }
 
 const SCOPE_OPTIONS = [
@@ -44,6 +45,7 @@ export function TodoDetailSheet({
   onOpenSource,
   onUpdateTodo,
   onDeleteTodo,
+  onExportCalendar,
 }: TodoDetailSheetProps) {
   const [editTask, setEditTask] = useState("");
   const [editDueDate, setEditDueDate] = useState("");
@@ -256,6 +258,26 @@ export function TodoDetailSheet({
             <div className="bg-amber-50 rounded-xl p-3">
               <p className="text-[11px] text-amber-700 leading-relaxed">💡 {todo.reason}</p>
             </div>
+          )}
+
+          {/* ── カレンダーに追加 (.ics) ── */}
+          {editDueDate && onExportCalendar && (
+            <button
+              type="button"
+              onClick={() => onExportCalendar({ ...todo, task: editTask.trim() || todo.task, dueDate: editDueDate, type: editType })}
+              className="w-full flex items-center justify-between py-3 px-4 rounded-xl border active:scale-[0.99] transition"
+              style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
+            >
+              <div className="text-left">
+                <p className="text-xs font-bold" style={{ color: "var(--color-text)" }}>
+                  外部カレンダーに追加
+                </p>
+                <p className="text-[10px] mt-0.5" style={{ color: "var(--color-muted)" }}>
+                  .ics ファイル（Google / Apple カレンダー）
+                </p>
+              </div>
+              <CalendarDays size={16} style={{ color: "var(--color-primary)" }} />
+            </button>
           )}
 
           {/* ── 元の書類を見る ── */}

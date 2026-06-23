@@ -1,0 +1,3 @@
+-- 003: 参考（アプリ側で client UUID 方式に修正済み）
+-- 002 の families_insert / family_members_insert が適用されていれば十分です。
+-- 002 の先頭（plan / stripe_customer_id 列追加）も未実行なら合わせて実行してください。
