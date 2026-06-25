@@ -13,11 +13,8 @@ import {
   type DocumentDetectResult,
 } from "@/lib/documentDetection";
 import { createLocalId } from "@/lib/ids";
-import { MascotCharacter } from "@/components/MascotCharacter";
-import type { UserProgress } from "@/lib/userProgress";
 
 interface FullScreenScanCaptureProps {
-  userProgress: UserProgress;
   capturedPages: CapturePage[];
   onAddPages: (pages: CapturePage[]) => void;
   onDone: () => void;
@@ -28,7 +25,6 @@ type DetectUiState = "searching" | "detected" | "countdown";
 
 /** 全画面カメラ + 書類検出 + 自動シャッター + 連続撮影 + 自動トリミング */
 export function FullScreenScanCapture({
-  userProgress,
   capturedPages,
   onAddPages,
   onDone,
@@ -322,9 +318,9 @@ export function FullScreenScanCapture({
 
       <div className="px-4 pt-3 pb-4 bg-black/80 space-y-3 z-10">
         <div className="flex items-center justify-between gap-2">
-          <div className="rounded-2xl p-3 flex-1 min-w-0" style={{ background: "rgba(255,255,255,0.08)" }}>
-            <MascotCharacter progress={userProgress} size="sm" showBar={false} />
-          </div>
+          <p className="text-[11px] text-white/70 flex-1 min-w-0 leading-relaxed">
+            書類を枠内に合わせて撮影してください
+          </p>
           <button
             type="button"
             onClick={() => setAutoShutterEnabled((v) => !v)}

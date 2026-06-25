@@ -9,11 +9,8 @@
 
 import { createClient, type SupabaseClient, type Session } from "@supabase/supabase-js";
 import type { Artwork, Child, Diary, Entry, EntrySection, Todo } from "@/lib/types";
-import type { PointsWallet } from "@/lib/pointsShop";
 import { toLocalChildId, toLocalEntryId, toLocalTodoId, toSyncId } from "@/lib/syncIds";
-import { levelFromXp, type UserProgress } from "@/lib/userProgress";
 import { mergeCloudChildProfiles } from "@/lib/childProfile";
-import { mergeChildCharacters } from "@/lib/childCharacters";
 
 // ── クライアント初期化 ──────────────────────────────────────────
 const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
@@ -257,8 +254,6 @@ export async function pullFromSupabase(familyIdOverride?: string): Promise<{
   kindergartenName: string;
   diaries: Diary[];
   artworks: Artwork[];
-  userProgress?: UserProgress;
-  pointsWallet?: PointsWallet;
 } | null> {
   if (!supabase) return null;
   const familyId = familyIdOverride ?? (await getFamilyId());
@@ -270,7 +265,7 @@ export async function pullFromSupabase(familyIdOverride?: string): Promise<{
     supabase.from("children").select("*").eq("family_id", familyId).order("sort_order"),
     supabase.from("categories").select("*").eq("family_id", familyId).order("sort_order"),
     supabase.from("kindergartens").select("name").eq("family_id", familyId).maybeSingle(),
-    supabase.from("families").select("user_progress, points_wallet").eq("id", familyId).maybeSingle(),
+    supabase.from("families").select("id").eq("id", familyId).maybeSingle(),
     supabase.from("diaries").select("*").eq("family_id", familyId).order("date", { ascending: false }),
     supabase.from("artworks").select("*").eq("family_id", familyId).order("date", { ascending: false }),
   ]);
@@ -322,10 +317,6 @@ export async function pullFromSupabase(familyIdOverride?: string): Promise<{
   const kindergartenName: string =
     kinderRes.data ? (kinderRes.data as Record<string, unknown>).name as string : "しいの実保育園";
 
-  const famRow = famRes.data as Record<string, unknown> | null;
-  const userProgress = parseUserProgress(famRow?.user_progress);
-  const pointsWallet = parsePointsWallet(famRow?.points_wallet);
-
   const diaries: Diary[] = diaryRes.error
     ? []
     : ((diaryRes.data || []) as Record<string, unknown>[]).map((row) =>
@@ -338,7 +329,7 @@ export async function pullFromSupabase(familyIdOverride?: string): Promise<{
         toLocalArtwork(row, knownChildIds)
       );
 
-  return { entries, children, categories, kindergartenName, diaries, artworks, userProgress, pointsWallet };
+  return { entries, children, categories, kindergartenName, diaries, artworks };
 }
 
 export type CloudPullPayload = NonNullable<Awaited<ReturnType<typeof pullFromSupabase>>>;
@@ -380,37 +371,6 @@ export async function syncCloudAfterAuth(
   }
 }
 
-function parseUserProgress(raw: unknown): UserProgress | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const p = raw as Partial<UserProgress> & { childCharacters?: unknown };
-  if (typeof p.xp !== "number") return undefined;
-  const childCharacters = Array.isArray(p.childCharacters)
-    ? (p.childCharacters as UserProgress["childCharacters"])
-    : undefined;
-  return {
-    totalScans: p.totalScans ?? 0,
-    xp: p.xp,
-    level: levelFromXp(p.xp),
-    characterId: p.characterId ?? "pii",
-    childCharacters,
-  };
-}
-
-function parsePointsWallet(raw: unknown): PointsWallet | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const p = raw as Partial<PointsWallet>;
-  if (typeof p.balance !== "number") return undefined;
-  return {
-    balance: p.balance,
-    totalEarned: p.totalEarned ?? p.balance,
-    redeemedIds: Array.isArray(p.redeemedIds) ? p.redeemedIds : [],
-    inventory:
-      p.inventory && typeof p.inventory === "object"
-        ? (p.inventory as Record<string, number>)
-        : {},
-  };
-}
-
 export function countSyncableEntries(entries: Entry[]): number {
   return entries.filter((e) => e.id !== "manual" && e.id !== "manual_shopping").length;
 }
@@ -439,20 +399,6 @@ export function mergeCloudCategories(local: string[], remote: string[]): string[
   return remote.length > 0 ? remote : local;
 }
 
-export function mergeUserProgress(local: UserProgress, remote?: UserProgress): UserProgress {
-  if (!remote) return local;
-  const childCharacters = mergeChildCharacters(
-    local.childCharacters ?? [],
-    remote.childCharacters ?? []
-  );
-  if (remote.xp >= local.xp) {
-    return { ...remote, childCharacters, level: levelFromXp(remote.xp) };
-  }
-  return { ...local, childCharacters, level: levelFromXp(local.xp) };
-}
-
-// mergePointsWallet は @/lib/pointsShop から re-export
-export { mergePointsWallet } from "@/lib/pointsShop";
 export { mergeCloudArtworks } from "@/lib/artworkStorage";
 
 // ── ローカル → Supabase プッシュ ──────────────────────────────────
@@ -468,8 +414,6 @@ export async function pushToSupabase(state: {
   kindergartenName: string;
   diaries?: Diary[];
   artworks?: Artwork[];
-  userProgress?: UserProgress;
-  pointsWallet?: PointsWallet;
   stripeCustomerId?: string;
   plan?: "free" | "premium";
 }): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -578,15 +522,8 @@ export async function pushToSupabase(state: {
       }
     }
 
-    if (
-      state.userProgress ||
-      state.pointsWallet ||
-      state.stripeCustomerId ||
-      state.plan
-    ) {
+    if (state.stripeCustomerId || state.plan) {
       const familyPatch: Record<string, unknown> = {};
-      if (state.userProgress) familyPatch.user_progress = state.userProgress;
-      if (state.pointsWallet) familyPatch.points_wallet = state.pointsWallet;
       if (state.stripeCustomerId) familyPatch.stripe_customer_id = state.stripeCustomerId;
       if (state.plan) familyPatch.plan = state.plan;
 
@@ -671,8 +608,6 @@ export async function syncPushWithStatus(state: {
   kindergartenName: string;
   diaries?: Diary[];
   artworks?: Artwork[];
-  userProgress?: UserProgress;
-  pointsWallet?: PointsWallet;
   stripeCustomerId?: string;
   plan?: "free" | "premium";
 }): Promise<SyncResult> {
@@ -725,8 +660,6 @@ export async function syncPullWithStatus(): Promise<
       kindergartenName: string;
       diaries: Diary[];
       artworks: Artwork[];
-      userProgress?: UserProgress;
-      pointsWallet?: PointsWallet;
     };
   }
 > {

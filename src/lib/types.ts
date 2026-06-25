@@ -25,6 +25,10 @@ export interface Todo {
   googleEventId?: string;
   /** Google から取り込んだ予定 */
   importedFromGoogle?: boolean;
+  /** AI 抽出の信頼度（0–1） */
+  confidence?: number;
+  /** 日付・内容の確認が必要（低信頼度 or 日付未設定など） */
+  needsReview?: boolean;
 }
 
 export type TodoAssignee = string;
@@ -57,6 +61,9 @@ export interface Diary {
   tags?: string[];
   /** じぃじ・ばぁば共有画面に表示するか（既定: 非共有） */
   shareWithGrandparents?: boolean;
+  /** 完了したやること・予定との紐付け */
+  linkedTodoId?: string;
+  linkedEntryId?: string;
 }
 
 /** お絵描きアルバムの1作品 */
@@ -116,6 +123,7 @@ export interface Child {
 
 export type Screen =
   | "home"
+  | "letters"
   | "memories"
   | "calendar"
   | "shopping"
@@ -123,8 +131,8 @@ export type Screen =
   | "grandparents"
   | "book_order";
 
-/** 思い出タブ内のサブビュー（書類 / お帳面 / 日記） */
-export type MemorySubview = "documents" | "ochomen" | "diary" | "art" | "timeline";
+/** 思い出タブ内のサブビュー（お帳面 / 日記 / 年表など） */
+export type MemorySubview = "ochomen" | "diary" | "art" | "timeline";
 
 /** 撮影した1ページ分 */
 export interface CapturePage {

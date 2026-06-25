@@ -8,6 +8,8 @@ import { formatRelativeDate, formatShortDate } from "@/lib/dates";
 import { ConfirmModal } from "./ConfirmModal";
 import { resolveEntryScope, SCOPE_LABELS } from "@/lib/calendarScope";
 import { ENTRY_SCOPE_OPTIONS } from "@/lib/scopeOptions";
+import { todoNeedsReview } from "@/lib/todoReview";
+import { TodoReviewBadge } from "@/components/TodoReviewBadge";
 
 // ---- 検索ハイライト ----
 const READINGS: Record<string, string> = {
@@ -924,6 +926,11 @@ export function EntryCard({
               <div className="flex-1 min-w-0">
                 <p className={`text-base font-semibold leading-snug ${todo.isCompleted ? "line-through text-slate-400" : "text-slate-800"}`}>
                   {todo.task}
+                  {todoNeedsReview(todo) && !todo.isCompleted && (
+                    <span className="ml-1.5 inline-block align-middle">
+                      <TodoReviewBadge />
+                    </span>
+                  )}
                 </p>
                 <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${

@@ -26,10 +26,9 @@ import {
   Star,
   Check,
   Users,
-  SlidersHorizontal,
 } from "lucide-react";
 import type { Todo, Entry, Child, Screen, MemorySubview, TodoDraft, Member, Diary, Artwork, CaptureDoc, CapturePage, EntryScope } from "@/lib/types";
-import { APP_TODAY, isOverdue, isToday, isTomorrow } from "@/lib/dates";
+import { APP_TODAY, isOverdue, isToday, isTomorrow, addDays, formatShortDate } from "@/lib/dates";
 import {
   localAppStateStore,
   incrementScanUsage,
@@ -87,6 +86,9 @@ import { TodoRow } from "@/components/TodoRow";
 import { Toast } from "@/components/Toast";
 import { PremiumModal, PLAN_LIMITS, type PlanId } from "@/components/PremiumModal";
 import { TodoDetailSheet } from "@/components/TodoDetailSheet";
+import { MemoryPromptSheet } from "@/components/MemoryPromptSheet";
+import { LettersInboxView, type LettersInboxFilter } from "@/components/LettersInboxView";
+import { shouldPromptMemoryOnComplete } from "@/lib/todoReview";
 import { FamilyHubView } from "@/components/FamilyHubView";
 import { OchomenView } from "@/components/OchomenView";
 import { MemoriesFab } from "@/components/MemoriesFab";
@@ -94,9 +96,6 @@ import { MemoriesSubviewTabs } from "@/components/MemoriesSubviewTabs";
 import { ArtworkAlbumView } from "@/components/ArtworkAlbumView";
 import { ChildGrowthTimelineView } from "@/components/ChildGrowthTimelineView";
 import {
-  BROWSE_CATEGORIES,
-  matchesBrowseCategory,
-  entryMatchesSearch,
   type BrowseCategoryId,
 } from "@/lib/browseCategories";
 import {
@@ -104,15 +103,6 @@ import {
   pickCelebrationMessage,
   triggerSuccessHaptic,
 } from "@/lib/feedback";
-import {
-  addScanXp,
-  loadUserProgress,
-  saveUserProgress,
-  type UserProgress,
-} from "@/lib/userProgress";
-import { addScanPoints, loadPointsWallet, savePointsWallet, type PointsWallet } from "@/lib/pointsShop";
-import { addChildCharactersScanXp, getChildScanCelebration, resolveHomeHeroDisplay } from "@/lib/childCharacters";
-import { ChildCharacterSetupModal } from "@/components/ChildCharacterSetupModal";
 import { ChildProfileEditSheet } from "@/components/ChildProfileEditSheet";
 import { GrandparentsView } from "@/components/GrandparentsView";
 import { BookOrderView } from "@/components/BookOrderView";
@@ -123,8 +113,6 @@ import { downloadTodoAsIcs } from "@/lib/calendarExport";
 import { appApiJsonHeaders } from "@/lib/apiClientHeaders";
 import { CalendarDayDetailSheet } from "@/components/CalendarDayDetailSheet";
 import { getTodoChipClass, inferScopeFromCategory, todoMatchesScopeFilter, entryMatchesScopeFilter, sortEntriesByDateDesc, sortTodosByDateDesc, searchScopeFilterLabel, normalizeEntriesScope } from "@/lib/calendarScope";
-import { MascotCharacter } from "@/components/MascotCharacter";
-import { ScanCelebrationOverlay } from "@/components/ScanCelebrationOverlay";
 import { CalendarContextBar } from "@/components/CalendarContextBar";
 import { SearchScopeTiles } from "@/components/SearchScopeTiles";
 import { ScreenContextBar } from "@/components/ScreenContextBar";
@@ -137,8 +125,6 @@ import {
   syncCloudAfterAuth,
   syncPushWithStatus,
   syncPullWithStatus,
-  mergeUserProgress,
-  mergePointsWallet,
   mergeCloudEntries,
   mergeCloudChildren,
   mergeCloudCategories,
@@ -158,6 +144,9 @@ export default function App() {
         currentScreen === "grandparents" ||
         currentScreen === "book_order"
       );
+    }
+    if (id === "calendar") {
+      return currentScreen === "calendar" || currentScreen === "shopping";
     }
     return currentScreen === id;
   };
@@ -253,10 +242,16 @@ export default function App() {
   const [ochomenFocus, setOchomenFocus] = useState<{ entryId: string; sectionIndex: number } | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingDiary, setIsProcessingDiary] = useState(false);
-  const [memorySubview, setMemorySubview] = useState<MemorySubview>("documents");
+  const [memorySubview, setMemorySubview] = useState<MemorySubview>("timeline");
   const [memoriesFilterOpen, setMemoriesFilterOpen] = useState(false);
+  const [lettersInboxFilter, setLettersInboxFilter] = useState<LettersInboxFilter>("all");
 
-  const goToMemories = useCallback((subview: MemorySubview = "documents") => {
+  const goToLetters = useCallback((filter: LettersInboxFilter = "all") => {
+    setLettersInboxFilter(filter);
+    setCurrentScreen("letters");
+  }, []);
+
+  const goToMemories = useCallback((subview: MemorySubview = "timeline") => {
     setCurrentScreen("memories");
     setMemorySubview(subview);
   }, []);
@@ -291,24 +286,8 @@ export default function App() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastVariant, setToastVariant] = useState<"default" | "celebration">("default");
-  const [userProgress, setUserProgress] = useState<UserProgress>({
-    totalScans: 0,
-    xp: 0,
-    level: 1,
-    characterId: "pii",
-  });
-  const [scanCelebration, setScanCelebration] = useState<{
-    xpGained: number;
-    leveledUp: boolean;
-    level: number;
-    childCharacter?: import("@/lib/childCharacters").ChildCharacter;
-  } | null>(null);
-  const [pointsWallet, setPointsWallet] = useState<PointsWallet>({
-    balance: 0,
-    redeemedIds: [],
-    totalEarned: 0,
-  });
   const [detailTodo, setDetailTodo] = useState<import("@/lib/types").Todo | null>(null);
+  const [memoryPromptTodo, setMemoryPromptTodo] = useState<Todo | null>(null);
   // 「元の書類を見る」ナビゲーション後に「タスクに戻る」ボタンで復帰するための状態
   const [sourceNavTodo, setSourceNavTodo] = useState<import("@/lib/types").Todo | null>(null);
   // "all" | "school" | "family" | "community" | childId（例: "c1"）
@@ -319,7 +298,6 @@ export default function App() {
   const [premiumTrigger, setPremiumTrigger] = useState<string | undefined>(undefined);
   const [scanUsage, setScanUsage] = useState<ScanUsage | undefined>(undefined);
   const [stripeCustomerId, setStripeCustomerId] = useState<string | undefined>(undefined);
-  const [characterSetupChild, setCharacterSetupChild] = useState<Child | null>(null);
   const [profileEditChild, setProfileEditChild] = useState<Child | null>(null);
   /** クラウド pull 直後は push を抑止（ログイン時の push/pull 競合防止） */
   const skipCloudPushUntilRef = useRef(0);
@@ -346,14 +324,12 @@ export default function App() {
           ...state,
           diaries,
           artworks,
-          userProgress,
-          pointsWallet,
         }).then((result) => {
           if (!result.ok) console.warn("[Supabase sync]", result.error);
         });
       }
     },
-    [children, kindergartenName, categories, entries, diaries, artworks, scanUsage, currentPlan, stripeCustomerId, userProgress, pointsWallet]
+    [children, kindergartenName, categories, entries, diaries, artworks, scanUsage, currentPlan, stripeCustomerId]
   );
 
   const applyCloudRemoteRef = useRef<
@@ -378,8 +354,6 @@ export default function App() {
       const pickChildren = resolveChildrenProfiles(mergedChildren, mergedEntries);
       const pickEntries = normalizeAllEntries(mergedEntries, pickChildren);
 
-      const mergedProgress = mergeUserProgress(loadUserProgress(), remote.userProgress);
-      const mergedPoints = mergePointsWallet(loadPointsWallet(), remote.pointsWallet);
       const pickDiaries = mergeCloudDiaries(loadDiaries(), remote.diaries ?? []);
       const pickArtworks = mergeCloudArtworks(loadArtworks(), remote.artworks ?? []);
 
@@ -393,14 +367,10 @@ export default function App() {
         }
         if (pickCategories.length > 0) setCategories(pickCategories);
         if (pickKindergarten) setKindergartenName(pickKindergarten);
-        setUserProgress(mergedProgress);
-        setPointsWallet(mergedPoints);
         setDiaries(pickDiaries);
         setArtworks(pickArtworks);
       });
 
-      saveUserProgress(mergedProgress);
-      savePointsWallet(mergedPoints);
       saveDiaries(pickDiaries);
       saveArtworks(pickArtworks);
 
@@ -575,8 +545,6 @@ export default function App() {
         if (storedDiaries.length > 0) setDiaries(storedDiaries);
         const storedArtworks = loadArtworks();
         if (storedArtworks.length > 0) setArtworks(storedArtworks);
-        setUserProgress(loadUserProgress());
-        setPointsWallet(loadPointsWallet());
         window.clearTimeout(hydrateFallback);
         queueMicrotask(() => setHydrated(true));
       }
@@ -787,32 +755,6 @@ export default function App() {
     setToastMessage(message);
   };
 
-  const awardScanXp = useCallback((scanCount: number, childIds?: string[]) => {
-    if (scanCount <= 0) return;
-    const xpChildIds = childIds ?? targetChildIds;
-    setUserProgress((prev) => {
-      const result = addScanXp(prev, scanCount);
-      const withChildXp = addChildCharactersScanXp(result.progress, xpChildIds, scanCount);
-      const childCelebration = getChildScanCelebration(prev, withChildXp, xpChildIds);
-      setScanCelebration(
-        childCelebration
-          ? {
-              xpGained: result.xpGained,
-              leveledUp: childCelebration.leveledUp,
-              level: childCelebration.level,
-              childCharacter: childCelebration.character,
-            }
-          : {
-              xpGained: result.xpGained,
-              leveledUp: result.leveledUp,
-              level: result.progress.level,
-            }
-      );
-      return withChildXp;
-    });
-    setPointsWallet((prev) => addScanPoints(prev, scanCount).wallet);
-  }, [targetChildIds]);
-
   const handleManualSyncPush = useCallback(async () => {
     const result = await syncPushWithStatus({
       entries,
@@ -821,8 +763,6 @@ export default function App() {
       kindergartenName,
       diaries,
       artworks,
-      userProgress,
-      pointsWallet,
       stripeCustomerId,
       plan: currentPlan,
     });
@@ -834,8 +774,6 @@ export default function App() {
     kindergartenName,
     diaries,
     artworks,
-    userProgress,
-    pointsWallet,
     stripeCustomerId,
     currentPlan,
   ]);
@@ -877,7 +815,7 @@ export default function App() {
 
   const scrollToEntry = (entryId: string, todoId?: string, opts?: { asOcr?: boolean; highlightText?: string }) => {
     markEntryRead(entryId);
-    goToMemories("documents");
+    goToLetters("all");
     if (todoId) setHighlightTodoId(todoId);
     const viewMode = opts?.asOcr ? "ocr" : todoId ? "image" : "ocr";
     setViewModes((prev) => ({ ...prev, [entryId]: viewMode }));
@@ -1154,7 +1092,6 @@ export default function App() {
     setActiveTab("all");
     setCurrentScreen("home");
 
-    awardScanXp(1);
   };
 
   const handleQuickSave = (title: string, category: string) => {
@@ -1201,7 +1138,6 @@ export default function App() {
     setIsScanModalOpen(false);
     resetScanForm();
     setCurrentScreen("home");
-    awardScanXp(1);
   };
 
   // ── 統合スキャン（複数書類・複数ページ対応） ──
@@ -1448,10 +1384,9 @@ export default function App() {
     if (autoCommit) {
       if (failedDocIds.length === 0) {
         // 全件成功 → モーダルを閉じる
-        awardScanXp(doneCount, childIds);
         setCaptureDocs([]);
         setIsBatchOpen(false);
-        goToMemories("documents");
+        goToLetters("all");
       } else {
         // 一部失敗 → 成功分だけ削除し、失敗分はモーダルに残す
         showToast(
@@ -1490,11 +1425,10 @@ export default function App() {
     if (splitEntryTotal > doneDocs.length) {
       showToast(`お帳面を合計${splitEntryTotal}日分に分けて登録しました`);
     }
-    awardScanXp(doneDocs.length, childIds);
     setCaptureDocs([]);
     setBatchConfirmMode(false);
     setIsBatchOpen(false);
-    goToMemories("documents");
+    goToLetters("all");
   };
 
   const handleAddShoppingItemDirect = () => {
@@ -1786,17 +1720,61 @@ export default function App() {
   };
 
   const toggleTodoComplete = (todoId: string) => {
+    const todo = findTodoById(entries, todoId);
+    if (!todo) return;
+
+    if (todo.isCompleted) {
+      setEntries(
+        entries.map((e) => {
+          if (!e.todos) return e;
+          return {
+            ...e,
+            todos: e.todos.map((t) =>
+              t.id === todoId ? { ...t, isCompleted: false } : t
+            ),
+          };
+        })
+      );
+      if (memoryPromptTodo?.id === todoId) setMemoryPromptTodo(null);
+      return;
+    }
+
     setEntries(
       entries.map((e) => {
         if (!e.todos) return e;
         return {
           ...e,
           todos: e.todos.map((t) =>
-            t.id === todoId ? { ...t, isCompleted: !t.isCompleted } : t
+            t.id === todoId ? { ...t, isCompleted: true } : t
           ),
         };
       })
     );
+
+    if (shouldPromptMemoryOnComplete(todo)) {
+      setMemoryPromptTodo({ ...todo, isCompleted: true });
+    }
+  };
+
+  const handleSaveMemoryFromTodo = (memo: string) => {
+    if (!memoryPromptTodo) return;
+    const entry = entries.find((e) => e.id === memoryPromptTodo.originalEntryId);
+    const childId = entry?.childIds?.[0] || selectedChildIds[0] || "c1";
+    const rawMemo = memo.trim() || `${memoryPromptTodo.task}（完了）`;
+    const newDiary: Diary = {
+      id: createLocalId("diary"),
+      childId,
+      date: APP_TODAY,
+      rawMemo,
+      content: rawMemo,
+      tags: [memoryPromptTodo.type === "event" ? "行事の記録" : "成長記録"],
+      linkedTodoId: memoryPromptTodo.id,
+      linkedEntryId: memoryPromptTodo.originalEntryId,
+      stretchLevel: "raw",
+    };
+    setDiaries((prev) => [newDiary, ...prev]);
+    setMemoryPromptTodo(null);
+    showToast("思い出に残しました");
   };
 
   const handleUpdateEntry = (entryId: string, updatedFields: Partial<Entry>) => {
@@ -1816,12 +1794,16 @@ export default function App() {
   };
 
   const handleUpdateTodo = (todoId: string, updatedFields: Partial<Todo>) => {
+    const normalized = { ...updatedFields };
+    if (normalized.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(normalized.dueDate)) {
+      normalized.needsReview = false;
+    }
     setEntries((currentEntries) =>
       currentEntries.map((e) => {
         if (!e.todos) return e;
         return {
           ...e,
-          todos: e.todos.map((t) => (t.id === todoId ? { ...t, ...updatedFields } : t)),
+          todos: e.todos.map((t) => (t.id === todoId ? { ...t, ...normalized } : t)),
         };
       })
     );
@@ -1887,6 +1869,25 @@ export default function App() {
     }
     return null;
   })();
+
+  const upcomingEvents = allTodos
+    .filter(
+      (t) =>
+        t.type === "event" &&
+        !t.isCompleted &&
+        t.dueDate &&
+        t.dueDate >= APP_TODAY &&
+        t.dueDate <= addDays(APP_TODAY, 14)
+    )
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.task.localeCompare(b.task))
+    .slice(0, 4);
+
+  const unreadEntries = filteredEntries
+    .filter((e) => !e.isRead)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 3);
+
+  const unreadLettersCount = filteredEntries.filter((e) => !e.isRead).length;
 
   const activeChildId = selectedChildIds.length > 0 ? selectedChildIds[0] : "c1";
 
@@ -2019,15 +2020,6 @@ export default function App() {
           onClose={() => setToastMessage(null)}
         />
 
-        <ScanCelebrationOverlay
-          visible={!!scanCelebration}
-          xpGained={scanCelebration?.xpGained ?? 0}
-          leveledUp={scanCelebration?.leveledUp ?? false}
-          level={scanCelebration?.level ?? 1}
-          childCharacter={scanCelebration?.childCharacter}
-          onDone={() => setScanCelebration(null)}
-        />
-
         {/* 日記テキスト全画面入力モーダル */}
         {showDiaryFullscreen && (
           <div
@@ -2116,6 +2108,8 @@ export default function App() {
                 ? "じぃじ・ばぁば"
                 : currentScreen === "book_order"
                   ? "デジタルブック"
+                  : currentScreen === "letters"
+                    ? "おたより"
                   : currentScreen === "memories"
                     ? "思い出"
                   : currentScreen === "calendar"
@@ -2156,7 +2150,7 @@ export default function App() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="やること・書類をキーワード検索..."
+                  placeholder="おたより・やること・予定を検索..."
                   className="w-full pl-8 pr-8 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-800 outline-none focus:border-teal-500"
                 />
                 {searchQuery && (
@@ -2308,36 +2302,13 @@ export default function App() {
           <div className="flex-1 flex flex-col min-h-0 justify-between">
             <div className="app-scroll-pane px-4 pt-5 pb-4 space-y-4">
               <div className="rounded-2xl p-4 border shadow-sm" style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}>
-                {(() => {
-                  const hero = resolveHomeHeroDisplay(children, selectedChildIds, userProgress);
-                  return (
-                    <>
-                      <MascotCharacter
-                        progress={userProgress}
-                        childCharacter={hero.character}
-                        size="md"
-                      />
-                      <p className="text-xs mt-2 leading-relaxed" style={{ color: "var(--color-muted)" }}>
-                        {hero.subtitle}
-                      </p>
-                    </>
-                  );
-                })()}
+                <p className="text-xs font-bold tracking-wide uppercase" style={{ color: "var(--color-primary)" }}>
+                  きょうの家庭オペレーション
+                </p>
+                <p className="text-sm mt-1 leading-relaxed" style={{ color: "var(--color-muted)" }}>
+                  次にやることを1つずつ片付けましょう
+                </p>
               </div>
-
-              {overdueTodos.length > 0 && (
-                <section className="space-y-2">
-                  <h3 className="text-xs font-bold text-red-600 flex items-center gap-1">
-                    <AlertCircle size={14} /> 期限超過 ({overdueTodos.length}件)
-                  </h3>
-                  <div className="space-y-2">{overdueTodos.slice(0, 3).map((t) => renderTodoRow(t))}</div>
-                  {overdueTodos.length > 3 && (
-                    <button type="button" onClick={() => setCurrentScreen("calendar")} className="text-xs font-bold" style={{ color: "var(--color-primary)" }}>
-                      すべて見る →
-                    </button>
-                  )}
-                </section>
-              )}
 
               {tonightOneThing ? (() => {
                 const associatedEntry = entries.find((e) => e.id === tonightOneThing.originalEntryId);
@@ -2394,6 +2365,115 @@ export default function App() {
                 </div>
               )}
 
+              {upcomingEvents.length > 0 && (
+                <section className="space-y-2">
+                  <h3 className="text-xs font-bold text-blue-700 flex items-center gap-1">
+                    <CalendarIcon size={14} /> 近日イベント
+                  </h3>
+                  <div className="space-y-2">
+                    {upcomingEvents.map((t) => {
+                      const srcEntry = entries.find((e) => e.id === t.originalEntryId);
+                      const childName = srcEntry
+                        ? children.find((c) => srcEntry.childIds.includes(c.id))?.name.split(" ")[0]
+                        : undefined;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => setDetailTodo(t)}
+                          className="w-full text-left bg-white border border-slate-100 rounded-xl px-3 py-3 shadow-sm flex items-center gap-3"
+                        >
+                          <div className="text-center flex-shrink-0 w-10">
+                            <p className="text-[10px] font-bold text-blue-600">{formatShortDate(t.dueDate)}</p>
+                            <p className="text-[9px] text-slate-400">{isToday(t.dueDate) ? "今日" : isTomorrow(t.dueDate) ? "明日" : ""}</p>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-slate-800 truncate">{t.task}</p>
+                            {childName && (
+                              <p className="text-[10px] text-slate-400 mt-0.5">{childName}さん</p>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentScreen("calendar")}
+                    className="text-xs font-bold"
+                    style={{ color: "var(--color-primary)" }}
+                  >
+                    カレンダーで見る →
+                  </button>
+                </section>
+              )}
+
+              {unreadEntries.length > 0 && (
+                <section className="space-y-2">
+                  <h3 className="text-xs font-bold text-teal-700 flex items-center gap-1">
+                    <FileText size={14} /> 新着お便り ({filteredEntries.filter((e) => !e.isRead).length}件)
+                  </h3>
+                  <div className="space-y-2">
+                    {unreadEntries.map((e) => {
+                      const childNames = e.childIds
+                        ?.map((id) => children.find((c) => c.id === id)?.name.split(" ")[0])
+                        .filter(Boolean)
+                        .join("・");
+                      return (
+                        <div
+                          key={e.id}
+                          className="bg-white border border-teal-100 rounded-xl px-3 py-3 shadow-sm"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full truncate">
+                              {e.category}
+                            </span>
+                            <span className="text-[10px] text-slate-400 flex-shrink-0">{e.date}</span>
+                          </div>
+                          {childNames && (
+                            <p className="text-[10px] text-slate-400 mt-1">{childNames}</p>
+                          )}
+                          <p className="text-sm text-slate-700 mt-1 line-clamp-2 leading-snug">
+                            {e.title || e.ocrText?.slice(0, 60) || "（内容なし）"}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => scrollToEntry(e.id)}
+                            className="mt-2 text-xs font-bold text-teal-600"
+                          >
+                            確認する →
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {filteredEntries.filter((e) => !e.isRead).length > 3 && (
+                    <button
+                      type="button"
+                      onClick={() => goToLetters("unread")}
+                      className="text-xs font-bold"
+                      style={{ color: "var(--color-primary)" }}
+                    >
+                      すべて見る →
+                    </button>
+                  )}
+                </section>
+              )}
+
+              {overdueTodos.length > 0 && (
+                <section className="space-y-2">
+                  <h3 className="text-xs font-bold text-red-600 flex items-center gap-1">
+                    <AlertCircle size={14} /> 期限超過 ({overdueTodos.length}件)
+                  </h3>
+                  <div className="space-y-2">{overdueTodos.slice(0, 3).map((t) => renderTodoRow(t))}</div>
+                  {overdueTodos.length > 3 && (
+                    <button type="button" onClick={() => setCurrentScreen("calendar")} className="text-xs font-bold" style={{ color: "var(--color-primary)" }}>
+                      すべて見る →
+                    </button>
+                  )}
+                </section>
+              )}
+
               {(todayTodos.length + tomorrowTodos.length > (tonightOneThing ? 1 : 0)) && (
                 <button
                   type="button"
@@ -2429,7 +2509,29 @@ export default function App() {
           </div>
         )}
 
-        {/* 思い出（書類・お帳面・日記・お絵描き） */}
+        {/* おたより（スキャン受信箱） */}
+        {currentScreen === "letters" && (
+          <LettersInboxView
+            filteredEntries={filteredEntries}
+            allEntries={entries}
+            inboxFilter={lettersInboxFilter}
+            onInboxFilterChange={setLettersInboxFilter}
+            searchText={timelineSearchText}
+            onSearchTextChange={setTimelineSearchText}
+            browseFilter={timelineBrowseFilter}
+            onBrowseFilterChange={setTimelineBrowseFilter}
+            filterOpen={memoriesFilterOpen}
+            onFilterOpenChange={setMemoriesFilterOpen}
+            activeTodos={activeTodos}
+            todosExpanded={recordTodosExpanded}
+            onTodosExpandedChange={setRecordTodosExpanded}
+            renderEntryCard={renderEntryCard}
+            renderTodoRow={(t) => renderTodoRow(t)}
+            onOpenScan={openBatchScan}
+          />
+        )}
+
+        {/* 思い出（年表・日記・お絵描き・お帳面） */}
         {currentScreen === "memories" && (
           <div className="flex flex-col flex-1 min-h-0 relative">
             <MemoriesSubviewTabs value={memorySubview} onChange={setMemorySubview} />
@@ -2471,133 +2573,6 @@ export default function App() {
                   }}
                 />
               </div>
-            ) : memorySubview === "documents" ? (
-              <>
-                <div className="bg-[var(--color-surface)] border-b px-3 py-3 flex-shrink-0 space-y-2" style={{ borderColor: "var(--color-border)" }}>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--color-muted)" }} />
-                      <input
-                        type="search"
-                        value={timelineSearchText}
-                        onChange={(e) => setTimelineSearchText(e.target.value)}
-                        placeholder="体操服、参観日、給食…"
-                        className="w-full pl-9 pr-3 py-3 rounded-2xl text-sm border bg-[var(--color-bg)] outline-none focus:border-[var(--color-primary)]"
-                        style={{ borderColor: "var(--color-border)", color: "var(--color-text)" }}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setMemoriesFilterOpen((v) => !v)}
-                      aria-label="絞り込み"
-                      className={`flex-shrink-0 w-12 h-12 rounded-2xl border flex items-center justify-center transition ${
-                        memoriesFilterOpen || timelineBrowseFilter !== "all"
-                          ? "border-[var(--color-primary)]"
-                          : ""
-                      }`}
-                      style={{
-                        background:
-                          memoriesFilterOpen || timelineBrowseFilter !== "all"
-                            ? "var(--color-primary-light)"
-                            : "var(--color-bg)",
-                        color:
-                          memoriesFilterOpen || timelineBrowseFilter !== "all"
-                            ? "var(--color-primary)"
-                            : "var(--color-muted)",
-                        borderColor:
-                          memoriesFilterOpen || timelineBrowseFilter !== "all"
-                            ? "var(--color-primary)"
-                            : "var(--color-border)",
-                      }}
-                    >
-                      <SlidersHorizontal size={18} />
-                    </button>
-                  </div>
-                  {memoriesFilterOpen && (
-                    <div className="flex gap-1.5 overflow-x-auto scrollbar-none pb-1">
-                      {BROWSE_CATEGORIES.map(({ id, label, icon }) => (
-                        <button
-                          key={id}
-                          type="button"
-                          onClick={() => {
-                            setTimelineBrowseFilter(id);
-                            if (id === "all") setMemoriesFilterOpen(false);
-                          }}
-                          className={`flex-shrink-0 flex items-center gap-1 px-3 py-2 rounded-full text-[11px] font-bold border transition min-h-[40px] ${
-                            timelineBrowseFilter === id ? "text-white border-transparent" : "bg-white"
-                          }`}
-                          style={
-                            timelineBrowseFilter === id
-                              ? { background: "var(--color-primary)", borderColor: "var(--color-primary)" }
-                              : { borderColor: "var(--color-border)", color: "var(--color-text)" }
-                          }
-                        >
-                          {icon} {label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {!memoriesFilterOpen && timelineBrowseFilter !== "all" && (
-                    <button
-                      type="button"
-                      onClick={() => setTimelineBrowseFilter("all")}
-                      className="text-[11px] font-bold px-3 py-1 rounded-full inline-flex items-center gap-1"
-                      style={{ background: "var(--color-primary-light)", color: "var(--color-primary)" }}
-                    >
-                      {BROWSE_CATEGORIES.find((c) => c.id === timelineBrowseFilter)?.icon}{" "}
-                      {BROWSE_CATEGORIES.find((c) => c.id === timelineBrowseFilter)?.label}
-                      <X size={12} />
-                    </button>
-                  )}
-                </div>
-                {activeTodos.length > 0 && (
-                  <div className="bg-amber-50/80 border-b border-amber-100 px-3 py-2 space-y-2 flex-shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setRecordTodosExpanded((v) => !v)}
-                      className="w-full flex items-center justify-between text-xs font-bold text-amber-700"
-                    >
-                      <span className="flex items-center gap-1">
-                        <AlertCircle size={14} />
-                        やること {activeTodos.length}件
-                      </span>
-                      {recordTodosExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </button>
-                    {recordTodosExpanded && (
-                      <div className="space-y-2 max-h-72 overflow-y-auto">
-                        {activeTodos.map((t) => renderTodoRow(t))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="app-scroll-pane p-4 space-y-4 pb-20">
-                  {(() => {
-                    const tabFiltered = filteredEntries.filter((e) => {
-                      if (!matchesBrowseCategory(e, timelineBrowseFilter)) return false;
-                      if (!entryMatchesSearch(e, timelineSearchText)) return false;
-                      return true;
-                    });
-                    if (tabFiltered.length === 0) {
-                      const syncable = countSyncableEntries(entries);
-                      return (
-                        <div className="text-center py-12 text-sm space-y-2" style={{ color: "var(--color-muted)" }}>
-                          {timelineSearchText.trim() || timelineBrowseFilter !== "all" ? (
-                            <p>条件に合う書類が見つかりません</p>
-                          ) : syncable > 0 && filteredEntries.length === 0 ? (
-                            <>
-                              <p>書類 {syncable} 件ありますが、お子さまの選択と合っていません</p>
-                              <p className="text-xs">上部の「全員」をタップして全員表示にしてください</p>
-                            </>
-                          ) : (
-                            <p>まだお帳面が登録されていません</p>
-                          )}
-                        </div>
-                      );
-                    }
-                    return tabFiltered.map((e) => renderEntryCard(e, tabFiltered));
-                  })()}
-                </div>
-              </>
             ) : memorySubview === "diary" ? (
               /* 成長日記 */
               <div className="app-scroll-pane p-4 space-y-4 pb-20">
@@ -2960,10 +2935,6 @@ export default function App() {
             childrenProfiles={children}
             diaries={diaries}
             artworks={artworks}
-            userProgress={userProgress}
-            pointsWallet={pointsWallet}
-            onPointsWalletChange={setPointsWallet}
-            onSetupCharacter={(child) => setCharacterSetupChild(child)}
             onEditProfile={(child) => setProfileEditChild(child)}
             onViewRecentMemory={handleViewRecentMemory}
             onToast={showToast}
@@ -3007,14 +2978,21 @@ export default function App() {
         {currentScreen === "shopping" && (
           <div className="flex flex-col flex-1 min-h-0 justify-between">
             <div className="app-scroll-pane p-4 space-y-4">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center gap-2">
               <div>
                 <h2 className="text-lg font-bold text-slate-800 flex items-center gap-1">
                   <ShoppingBag className="text-amber-500" size={20} />
                   買い物リスト
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">保育園で必要な買うもの一覧</p>
+                <p className="text-xs text-slate-400 mt-0.5">おたよりから抽出された買うもの一覧</p>
               </div>
+              <button
+                type="button"
+                onClick={() => setCurrentScreen("calendar")}
+                className="text-xs font-bold text-teal-600 px-2 py-1 rounded-lg bg-teal-50"
+              >
+                ← 予定
+              </button>
             </div>
 
             {/* 買い物アイテム一覧 */}
@@ -3373,6 +3351,7 @@ export default function App() {
                 setCalendarQuickAddDate(selectedDay || APP_TODAY);
                 setSelectedDay(selectedDay || APP_TODAY);
               }}
+              onOpenShopping={() => setCurrentScreen("shopping")}
             />
           </div>
           );
@@ -3410,21 +3389,26 @@ export default function App() {
           {(
             [
               { id: "home" as Screen, icon: Home, label: "きょう" },
-              { id: "memories" as Screen, icon: Sparkles, label: "思い出" },
+              { id: "letters" as Screen, icon: FileText, label: "おたより", badge: unreadLettersCount },
               { id: "calendar" as Screen, icon: CalendarIcon, label: "予定" },
-              { id: "shopping" as Screen, icon: ShoppingBag, label: "買い物" },
+              { id: "memories" as Screen, icon: Sparkles, label: "思い出" },
               { id: "family" as Screen, icon: Users, label: "わが家" },
-            ] as const
-          ).map(({ id, icon: Icon, label }) => (
+            ] satisfies Array<{ id: Screen; icon: typeof Home; label: string; badge?: number }>
+          ).map(({ id, icon: Icon, label, badge }) => (
             <button
               key={id}
               onClick={() => setCurrentScreen(id)}
-              className={`app-nav-button flex flex-col items-center justify-center gap-0.5 text-xs font-bold py-1 px-2 transition active:scale-95 ${
+              className={`app-nav-button relative flex flex-col items-center justify-center gap-0.5 text-xs font-bold py-1 px-2 transition active:scale-95 ${
                 isMainNavActive(id) ? "app-nav-button-active" : ""
               }`}
               style={{ color: isMainNavActive(id) ? "var(--color-primary)" : "var(--color-muted)" }}
             >
               <Icon size={20} />
+              {badge !== undefined && badge > 0 && id === "letters" && (
+                <span className="absolute top-0 right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
+                  {badge > 9 ? "9+" : badge}
+                </span>
+              )}
               <span>{label}</span>
             </button>
           ))}
@@ -3545,7 +3529,6 @@ export default function App() {
         {/* 統合スキャンモーダル */}
         <BatchScanModal
           open={isBatchOpen}
-          userProgress={userProgress}
           childrenProfiles={children}
           categories={categories}
           targetChildIds={targetChildIds}
@@ -3572,13 +3555,6 @@ export default function App() {
           onClose={() => setIsBatchOpen(false)}
           onProcess={handleProcessDocs}
           onCommitConfirmed={handleCommitConfirmed}
-        />
-        <ChildCharacterSetupModal
-          open={!!characterSetupChild}
-          child={characterSetupChild}
-          userProgress={userProgress}
-          onClose={() => setCharacterSetupChild(null)}
-          onSave={setUserProgress}
         />
         <ChildProfileEditSheet
           child={profileEditChild}
@@ -3655,8 +3631,6 @@ export default function App() {
               showToast("ネットワークエラーが発生しました");
             }
           }}
-          pointsWallet={pointsWallet}
-          onPointsWalletChange={setPointsWallet}
           onToast={showToast}
           onManualSyncPull={isSupabaseConfigured ? handleManualSyncPull : undefined}
           onManualSyncPush={isSupabaseConfigured ? handleManualSyncPush : undefined}
@@ -3749,6 +3723,19 @@ export default function App() {
             const ok = downloadTodoAsIcs(todo, kindergartenName);
             showToast(ok ? "カレンダーファイルを保存しました 📅" : "日付がないため出力できません");
           }}
+        />
+
+        <MemoryPromptSheet
+          todo={memoryPromptTodo}
+          entry={
+            memoryPromptTodo
+              ? entries.find((e) => e.id === memoryPromptTodo.originalEntryId)
+              : undefined
+          }
+          children={children}
+          onClose={() => setMemoryPromptTodo(null)}
+          onSave={handleSaveMemoryFromTodo}
+          onGoToDiary={() => goToMemories("diary")}
         />
 
         {/* 音声AI日記追加モーダル */}

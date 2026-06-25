@@ -8,11 +8,9 @@ import { OcrSkeleton } from "@/components/OcrSkeleton";
 import { FullScreenScanCapture } from "@/components/FullScreenScanCapture";
 import { processScanFile } from "@/lib/documentTrim";
 import { createLocalId } from "@/lib/ids";
-import type { UserProgress } from "@/lib/userProgress";
 
 interface BatchScanModalProps {
   open: boolean;
-  userProgress: UserProgress;
   childrenProfiles: Child[];
   categories: string[];
   targetChildIds: string[];
@@ -35,7 +33,6 @@ interface BatchScanModalProps {
 
 export function BatchScanModal({
   open,
-  userProgress,
   childrenProfiles,
   categories,
   targetChildIds,
@@ -120,7 +117,6 @@ export function BatchScanModal({
   if (phase === "capture") {
     return (
       <FullScreenScanCapture
-        userProgress={userProgress}
         capturedPages={allCapturedPages}
         onAddPages={(pages) => {
           if (targetDocRef.current) {
@@ -231,7 +227,7 @@ export function BatchScanModal({
         )}
 
         {!showConfirmList && isProcessing && (
-          <OcrSkeleton message="プリントを読み解いています" compact userProgress={userProgress} mascotAnim="eat" />
+          <OcrSkeleton message="プリントを読み解いています" compact />
         )}
 
         {/* 撮影ボタン（新しい書類） */}

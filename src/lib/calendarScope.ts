@@ -30,7 +30,7 @@ export function resolveTodoScope(
 }
 
 export const SCOPE_LABELS: Record<EntryScope, { label: string; icon: string }> = {
-  school: { label: "保育園", icon: "🏫" },
+  school: { label: "学校・園", icon: "🏫" },
   family: { label: "家族", icon: "🏠" },
   community: { label: "地域", icon: "📍" },
 };

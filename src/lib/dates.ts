@@ -43,3 +43,11 @@ export function formatShortDate(dateStr: string): string {
   const d = Number(dateStr.slice(8, 10));
   return `${m}/${d}`;
 }
+
+/** ISO 日付に n 日加算 */
+export function addDays(dateStr: string, days: number, today = APP_TODAY): string {
+  const base = dateStr || today;
+  const d = new Date(`${base}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}

@@ -9,6 +9,8 @@ import type { Todo, Entry, Child, Member } from "@/lib/types";
 import { formatRelativeDate, formatShortDate, isOverdue, isToday } from "@/lib/dates";
 import { resolveTodoScope, SCOPE_LABELS } from "@/lib/calendarScope";
 import { ConfirmModal } from "./ConfirmModal";
+import { todoNeedsReview } from "@/lib/todoReview";
+import { TodoReviewBadge } from "@/components/TodoReviewBadge";
 
 interface TodoDetailSheetProps {
   todo: Todo | null;
@@ -70,6 +72,7 @@ export function TodoDetailSheet({
   const hasAlarm = todo.reminderAt && todo.reminderAt !== "none";
   const inheritedScope = resolveTodoScope(todo, entries, childProfiles);
   const scopeMeta = SCOPE_LABELS[inheritedScope];
+  const needsReview = todoNeedsReview(todo);
 
   const typeOption = TYPE_OPTIONS.find((t) => t.key === editType) ?? TYPE_OPTIONS[0];
 
@@ -86,13 +89,17 @@ export function TodoDetailSheet({
   };
 
   const handleSave = () => {
-    onUpdateTodo(todo.id, {
+    const updates: Partial<Todo> = {
       task: editTask.trim(),
       dueDate: editDueDate,
       assignedTo: editAssignedTo as any,
       type: editType,
       reminderAt: editReminderAt,
-    });
+    };
+    if (editDueDate && /^\d{4}-\d{2}-\d{2}$/.test(editDueDate)) {
+      updates.needsReview = false;
+    }
+    onUpdateTodo(todo.id, updates);
     setIsDirty(false);
     onClose();
   };
@@ -121,6 +128,16 @@ export function TodoDetailSheet({
         </div>
 
         <div className="overflow-y-auto flex-1 px-4 space-y-3 pb-2">
+
+          {needsReview && !todo.isCompleted && (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 flex items-start gap-2">
+              <TodoReviewBadge />
+              <p className="text-xs text-amber-800 leading-relaxed">
+                AI抽出の内容です。日付やタスク名を確認してください。
+                {!editDueDate && " 期日が未設定の場合は、下の「期日」から設定できます。"}
+              </p>
+            </div>
+          )}
 
           {/* ── タスク名（直接編集） ── */}
           <div className={`border-l-4 rounded-xl p-3 ${accentColor}`}>

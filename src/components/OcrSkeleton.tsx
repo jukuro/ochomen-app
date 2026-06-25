@@ -1,53 +1,33 @@
 "use client";
 
-import { MascotCharacter, type MascotAnim } from "@/components/MascotCharacter";
-import type { UserProgress } from "@/lib/userProgress";
-
 interface OcrSkeletonProps {
   message?: string;
   compact?: boolean;
-  userProgress?: UserProgress;
-  mascotAnim?: MascotAnim;
 }
 
-/** OCR待ち — キャラ + Skeleton（待たされている感を減らす） */
-export function OcrSkeleton({
-  message = "プリントを読み解いています",
-  compact = false,
-  userProgress,
-  mascotAnim = "eat",
-}: OcrSkeletonProps) {
+export function OcrSkeleton({ message = "読み取り中…", compact = false }: OcrSkeletonProps) {
   return (
     <div
-      className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] ${
-        compact ? "p-4 space-y-3" : "p-6 space-y-4"
-      }`}
-      role="status"
+      className={`flex flex-col items-center justify-center gap-3 ${compact ? "py-6" : "py-10"}`}
+      aria-busy="true"
       aria-live="polite"
     >
-      {userProgress ? (
-        <MascotCharacter progress={userProgress} size={compact ? "sm" : "md"} anim={mascotAnim} showBar={false} />
-      ) : (
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-[var(--color-primary-light)] flex items-center justify-center text-lg flex-shrink-0 mascot-eat">
-            📄
-          </div>
-          <p className="text-sm font-bold text-[var(--color-text)]">{message}</p>
-        </div>
-      )}
-      <p className={`text-sm font-bold ${userProgress ? "-mt-1" : ""}`} style={{ color: "var(--color-text)" }}>
+      <div
+        className={`rounded-full border-2 border-teal-200 border-t-teal-600 animate-spin ${
+          compact ? "w-8 h-8" : "w-10 h-10"
+        }`}
+      />
+      <p className="text-sm font-bold" style={{ color: "var(--color-text)" }}>
         {message}
       </p>
-      <div className="space-y-2">
-        <div className="h-3 rounded-full app-shimmer w-full" />
-        <div className="h-3 rounded-full app-shimmer w-[88%]" />
-        <div className="h-3 rounded-full app-shimmer w-[72%]" />
-        {!compact && (
-          <>
-            <div className="h-3 rounded-full app-shimmer w-[94%] mt-3" />
-            <div className="h-3 rounded-full app-shimmer w-[60%]" />
-          </>
-        )}
+      <div className="flex gap-1">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse"
+            style={{ animationDelay: `${i * 150}ms` }}
+          />
+        ))}
       </div>
     </div>
   );

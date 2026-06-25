@@ -30,6 +30,7 @@ interface CalendarContextBarProps {
   selectedChildIds: string[];
   onAddClick: () => void;
   onCollapse?: () => void;
+  onOpenShopping?: () => void;
 }
 
 export function CalendarContextBar({
@@ -48,6 +49,7 @@ export function CalendarContextBar({
   selectedChildIds,
   onAddClick,
   onCollapse,
+  onOpenShopping,
 }: CalendarContextBarProps) {
   const viewShort = calendarViewMode === "month" ? "月" : calendarViewMode === "week" ? "週" : "日";
   const layoutShort =
@@ -192,6 +194,15 @@ export function CalendarContextBar({
       >
         <Plus size={14} /> 予定・やることを追加
       </button>
+      {onOpenShopping && (
+        <button
+          type="button"
+          onClick={onOpenShopping}
+          className="mx-3 mb-2.5 w-[calc(100%-1.5rem)] py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 border border-amber-200 bg-amber-50 text-amber-700"
+        >
+          🛒 買い物リスト
+        </button>
+      )}
     </ScreenContextBar>
   );
 }

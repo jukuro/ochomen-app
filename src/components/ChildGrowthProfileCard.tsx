@@ -3,14 +3,11 @@
 import { ChevronRight, Pencil } from "lucide-react";
 import type { Artwork, Child, Diary } from "@/lib/types";
 import { childProfileStats, formatChildAge, grandparentsShareStats, type LatestMemory } from "@/lib/childProfile";
-import { getChildCharacter } from "@/lib/childCharacters";
-import type { UserProgress } from "@/lib/userProgress";
 
 interface ChildGrowthProfileCardProps {
   child: Child;
   diaries: Diary[];
   artworks: Artwork[];
-  userProgress: UserProgress;
   onEdit: () => void;
   onViewRecentMemory: (memory: LatestMemory) => void;
 }
@@ -19,14 +16,12 @@ export function ChildGrowthProfileCard({
   child,
   diaries,
   artworks,
-  userProgress,
   onEdit,
   onViewRecentMemory,
 }: ChildGrowthProfileCardProps) {
   const stats = childProfileStats(child.id, diaries, artworks);
   const shareStats = grandparentsShareStats(child.id, diaries, artworks);
   const age = child.birthDate ? formatChildAge(child.birthDate) : null;
-  const character = getChildCharacter(userProgress, child.id);
   const firstName = child.name.split(" ")[0];
   const memory = stats.latestMemory;
 
@@ -50,7 +45,7 @@ export function ChildGrowthProfileCard({
             {age && (
               <span
                 className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                style={{ background: "var(--color-secondary-light)", color: "var(--color-secondary)" }}
+                style={{ background: "var(--color-bg)", color: "var(--color-muted)" }}
               >
                 {age}
               </span>
@@ -104,10 +99,10 @@ export function ChildGrowthProfileCard({
         </div>
         <div className="rounded-xl py-2" style={{ background: "var(--color-bg)" }}>
           <p className="text-sm font-bold" style={{ color: "var(--color-secondary)" }}>
-            {character ? `Lv.${character.level}` : "—"}
+            {shareStats.total}
           </p>
           <p className="text-[9px]" style={{ color: "var(--color-muted)" }}>
-            キャラ
+            共有中
           </p>
         </div>
       </div>
@@ -116,26 +111,19 @@ export function ChildGrowthProfileCard({
         <button
           type="button"
           onClick={() => onViewRecentMemory(memory)}
-          className="w-full flex items-center gap-3 p-3 rounded-xl border text-left active:scale-[0.99] transition"
-          style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
+          className="w-full flex items-center gap-2 p-3 rounded-xl border text-left active:scale-[0.99] transition"
+          style={{ background: "var(--color-bg)", borderColor: "var(--color-border)" }}
         >
-          {memory.type === "art" && memory.previewUrl ? (
-            <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-100 flex-shrink-0">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={memory.previewUrl} alt="" className="w-full h-full object-cover" />
-            </div>
-          ) : (
-            <span className="text-2xl flex-shrink-0">{memory.type === "art" ? "🎨" : "🌸"}</span>
-          )}
+          <span className="text-lg">{memory.type === "diary" ? "📔" : "🎨"}</span>
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-bold" style={{ color: "var(--color-muted)" }}>
-              最近の思い出 · {memory.type === "art" ? "お絵描き" : "日記"}を見る
+            <p className="text-[10px]" style={{ color: "var(--color-muted)" }}>
+              最近の思い出
             </p>
-            <p className="text-xs truncate mt-0.5" style={{ color: "var(--color-text)" }}>
+            <p className="text-xs font-medium truncate" style={{ color: "var(--color-text)" }}>
               {memory.label}
             </p>
           </div>
-          <ChevronRight size={16} style={{ color: "var(--color-muted)" }} />
+          <ChevronRight size={14} style={{ color: "var(--color-muted)" }} />
         </button>
       )}
     </div>

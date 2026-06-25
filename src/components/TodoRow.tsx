@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 import { ShoppingBag, ClipboardList, Bell, CalendarDays, CalendarX, ArrowRight } from "lucide-react";
 import type { Child, Entry, Todo, Member } from "@/lib/types";
 import { formatRelativeDate, formatShortDate, isOverdue, isToday } from "@/lib/dates";
+import { todoNeedsReview } from "@/lib/todoReview";
+import { TodoReviewBadge } from "@/components/TodoReviewBadge";
 
 interface TodoRowProps {
   todo: Todo;
@@ -41,6 +43,7 @@ export function TodoRow({
   const isShopping = todo.type === "shopping";
   const isEvent = todo.type === "event";
   const hasAlarm = todo.reminderAt && todo.reminderAt !== "none";
+  const needsReview = todoNeedsReview(todo);
 
   const assignedMember = members.find((m) => m.name === todo.assignedTo);
   const assigneeLabel = assignedMember ? `${assignedMember.role} ${todo.assignedTo}` : todo.assignedTo || "共通";
@@ -81,6 +84,7 @@ export function TodoRow({
           <p className={`text-sm font-medium leading-snug text-slate-700 ${todo.isCompleted ? "line-through text-slate-400" : ""}`}>
             {todo.task}
           </p>
+          {needsReview && !todo.isCompleted && <TodoReviewBadge className="flex-shrink-0" />}
         </div>
         <div className="flex items-center justify-between border-t border-slate-50 pt-2 text-xs text-slate-400">
           <div className="flex items-center gap-2">
@@ -155,6 +159,7 @@ export function TodoRow({
             <p className={`truncate text-slate-700 font-semibold text-base leading-snug ${todo.isCompleted ? "line-through text-slate-400" : ""}`}>
               {todo.task}
             </p>
+            {needsReview && !todo.isCompleted && <TodoReviewBadge />}
             {hasAlarm && <Bell size={13} className="text-teal-600 flex-shrink-0" />}
           </div>
           <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">

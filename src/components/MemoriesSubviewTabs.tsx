@@ -10,10 +10,9 @@ interface MemoriesSubviewTabsProps {
 export function MemoriesSubviewTabs({ value, onChange }: MemoriesSubviewTabsProps) {
   const tabs: { id: MemorySubview; label: string }[] = [
     { id: "timeline", label: "📅 年表" },
-    { id: "documents", label: "📄 書類" },
-    { id: "ochomen", label: "📒 お帳面" },
     { id: "diary", label: "🌸 日記" },
     { id: "art", label: "🎨 お絵描き" },
+    { id: "ochomen", label: "📒 お帳面" },
   ];
 
   return (

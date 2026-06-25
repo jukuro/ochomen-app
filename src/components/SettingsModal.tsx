@@ -13,8 +13,6 @@ import {
   signOut,
   fetchCloudEntryCount,
 } from "@/lib/supabaseSync";
-import { PointsShopSection } from "@/components/PointsShopSection";
-import type { PointsWallet } from "@/lib/pointsShop";
 import type { NotificationPrefs } from "@/lib/notificationPrefs";
 import {
   getNotificationPermission,
@@ -58,8 +56,6 @@ interface SettingsModalProps {
   stripeCustomerId?: string;
   onShowPremium?: () => void;
   onManageSubscription?: () => void;
-  pointsWallet?: PointsWallet;
-  onPointsWalletChange?: (wallet: PointsWallet) => void;
   onToast?: (message: string, options?: { celebrate?: boolean }) => void;
   onManualSyncPull?: () => Promise<void>;
   onManualSyncPush?: () => Promise<void>;
@@ -113,8 +109,6 @@ export function SettingsModal({
   stripeCustomerId,
   onShowPremium,
   onManageSubscription,
-  pointsWallet,
-  onPointsWalletChange,
   onToast,
   onManualSyncPull,
   onManualSyncPush,
@@ -498,14 +492,6 @@ export function SettingsModal({
         </div>
 
         <AddToHomeScreenSection onToast={onToast} />
-
-        {pointsWallet && onPointsWalletChange && onToast && (
-          <PointsShopSection
-            wallet={pointsWallet}
-            onWalletChange={onPointsWalletChange}
-            onToast={onToast}
-          />
-        )}
 
         {/* 基本情報設定 */}
         <div className="space-y-3 border-t border-slate-100 pt-3">

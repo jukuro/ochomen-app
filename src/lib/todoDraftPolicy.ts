@@ -106,21 +106,34 @@ export function mapDraftsToTodos(
     type?: "todo" | "shopping" | "event";
     reminderAt?: "none" | "today" | "1day" | "3day";
     reason?: string;
+    confidence?: number;
+    needsReview?: boolean;
   }>,
   entryId: string,
   createTodoId: () => string
 ) {
   return drafts
     .filter((d) => d.task?.trim())
-    .map((d) => ({
-      id: createTodoId(),
-      task: d.task.trim(),
-      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(d.dueDate) ? d.dueDate : "",
-      isCompleted: false,
-      assignedTo: d.assignedTo,
-      originalEntryId: entryId,
-      type: d.type || "todo",
-      reminderAt: d.reminderAt || "none",
-      reason: d.reason,
-    }));
+    .map((d) => {
+      const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(d.dueDate) ? d.dueDate : "";
+      const type = d.type || "todo";
+      const confidence = d.confidence;
+      const needsReview =
+        d.needsReview ??
+        ((confidence !== undefined && confidence < 0.7) ||
+          (!dueDate && type !== "shopping"));
+      return {
+        id: createTodoId(),
+        task: d.task.trim(),
+        dueDate,
+        isCompleted: false,
+        assignedTo: d.assignedTo,
+        originalEntryId: entryId,
+        type,
+        reminderAt: d.reminderAt || "none",
+        reason: d.reason,
+        confidence,
+        needsReview: needsReview || undefined,
+      };
+    });
 }
