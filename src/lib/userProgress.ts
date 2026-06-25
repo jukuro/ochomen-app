@@ -80,7 +80,11 @@ export function loadUserProgress(): UserProgress {
 }
 
 export function saveUserProgress(progress: UserProgress): void {
-  localStorage.setItem(USER_PROGRESS_KEY, JSON.stringify(progress));
+  try {
+    localStorage.setItem(USER_PROGRESS_KEY, JSON.stringify(progress));
+  } catch (err) {
+    console.warn("[localStorage] save user progress failed:", err);
+  }
 }
 
 export interface ScanXpResult {

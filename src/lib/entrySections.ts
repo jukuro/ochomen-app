@@ -108,7 +108,8 @@ export function migrateEntries(entries: Entry[]): { entries: Entry[]; migratedCo
   let migratedCount = 0;
   const next = entries.map((entry) => {
     if (entry.sections && entry.sections.length > 0) return entry;
-    const inferred = inferSectionsFromOcrText(entry.ocrText, entry.date);
+    const ocrText = typeof entry.ocrText === "string" ? entry.ocrText : "";
+    const inferred = inferSectionsFromOcrText(ocrText, entry.date);
     if (inferred.length === 0) return entry;
     migratedCount += 1;
     return { ...entry, sections: inferred };

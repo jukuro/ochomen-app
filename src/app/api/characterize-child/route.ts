@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { guardApiRequest } from "@/lib/apiGuard";
 import {
   CHARACTER_THEMES,
   THEME_FALLBACKS,
@@ -19,6 +20,9 @@ const VALID_THEMES = new Set<CharacterTheme>([
 ]);
 
 export async function POST(request: Request) {
+  const guardError = guardApiRequest(request, "characterize-child");
+  if (guardError) return guardError;
+
   try {
     const body = (await request.json()) as {
       childId?: unknown;
@@ -131,6 +135,6 @@ ${photoBase64 ? "参考写真あり。写真の雰囲気（髪型・雰囲気・
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("characterize-child error:", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: "Failed to generate character." }, { status: 500 });
   }
 }

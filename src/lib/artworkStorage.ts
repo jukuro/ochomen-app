@@ -21,7 +21,11 @@ export function loadArtworks(): Artwork[] {
 }
 
 export function saveArtworks(artworks: Artwork[]): void {
-  localStorage.setItem(ARTWORKS_STORAGE_KEY, JSON.stringify(artworks));
+  try {
+    localStorage.setItem(ARTWORKS_STORAGE_KEY, JSON.stringify(artworks));
+  } catch (err) {
+    console.warn("[localStorage] save artworks failed:", err);
+  }
 }
 
 /** 端末間で id 単位マージ（日付が新しい方・画像付きを優先） */

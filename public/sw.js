@@ -1,7 +1,7 @@
-/* おたより帳 — リマインダー用 Service Worker v2
- * 通知タップのみ担当。ページ読み込みは常にネットワークへ（更新時の不具合防止）
+/* おたより帳 — リマインダー用 Service Worker v3
+ * 通知タップのみ担当。fetch は横取りしない（横取りすると通信エラー時に白画面になる）
  */
-const SW_VERSION = "v2";
+const SW_VERSION = "v3";
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
@@ -16,7 +16,7 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 self.addEventListener("install", () => {
-  // skipWaiting しない — 更新中のリロードでページが壊れないよう待機
+  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
@@ -25,11 +25,8 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-self.addEventListener("fetch", (event) => {
-  if (event.request.mode !== "navigate") return;
-  event.respondWith(
-    fetch(event.request).catch(() =>
-      Response.error()
-    )
-  );
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });

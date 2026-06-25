@@ -21,7 +21,11 @@ export function loadDiaries(): Diary[] {
 }
 
 export function saveDiaries(diaries: Diary[]): void {
-  localStorage.setItem(DIARIES_STORAGE_KEY, JSON.stringify(diaries));
+  try {
+    localStorage.setItem(DIARIES_STORAGE_KEY, JSON.stringify(diaries));
+  } catch (err) {
+    console.warn("[localStorage] save diaries failed:", err);
+  }
 }
 
 /** 端末間で id 単位マージ（内容が長い方・日付が新しい方を優先） */

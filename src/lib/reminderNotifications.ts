@@ -105,36 +105,20 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 }
 
 export async function registerReminderServiceWorker(): Promise<void> {
-  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
-  try {
-    await navigator.serviceWorker.register("/sw.js", {
-      scope: "/",
-      updateViaCache: "none",
-    });
-  } catch {
-    // PWA 未対応環境では無視
-  }
+  // Service Worker はページ読み込み不安定の原因となるため登録しない。
 }
 
 function showNotification(title: string, body: string, tag: string): boolean {
   if (typeof window === "undefined" || !("Notification" in window)) return false;
   if (Notification.permission !== "granted") return false;
   try {
-    const options: NotificationOptions = {
+    new Notification(title, {
       body,
       tag,
       icon: "/icon.svg",
       badge: "/icon.svg",
       lang: "ja",
-    };
-    if ("serviceWorker" in navigator) {
-      void navigator.serviceWorker.ready.then((registration) =>
-        registration.showNotification(title, options)
-      );
-    } else {
-      new Notification(title, options);
-    }
+    });
     return true;
   } catch {
     return false;

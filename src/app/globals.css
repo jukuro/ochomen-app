@@ -242,6 +242,66 @@ body {
   }
 }
 
+@media (min-width: 768px) {
+  .app-shell {
+    max-width: 42rem;
+    box-shadow: 0 0 0 1px var(--color-border);
+  }
+}
+
+.app-calendar-cell {
+  min-height: 4.75rem;
+}
+
+.app-calendar-cell-blank {
+  min-height: 4.75rem;
+  background: var(--color-bg);
+}
+
+.app-calendar-chip {
+  font-size: 0.625rem;
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.25rem;
+  line-height: 1.25;
+}
+
+@media (min-width: 768px) {
+  .app-calendar-cell,
+  .app-calendar-cell-blank {
+    min-height: 5.5rem;
+  }
+
+  .app-calendar-chip {
+    font-size: 0.6875rem;
+    padding: 0.1875rem 0.375rem;
+  }
+}
+
+.search-scope-tile {
+  min-height: 4.25rem;
+}
+
+@media (min-width: 768px) {
+  .search-scope-tile {
+    min-height: 4.75rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-shell {
+    max-width: 48rem;
+  }
+
+  .app-calendar-cell,
+  .app-calendar-cell-blank {
+    min-height: 6.25rem;
+  }
+
+  .app-calendar-chip {
+    font-size: 0.75rem;
+  }
+}
+
 .app-hero-card {
   background: linear-gradient(145deg, #fff8f5 0%, #fdeee9 100%);
   border: 1px solid rgba(232, 130, 106, 0.18);

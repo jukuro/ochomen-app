@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import type { Todo, Entry, Child, Member } from "@/lib/types";
 import { formatRelativeDate, formatShortDate, isOverdue, isToday } from "@/lib/dates";
+import { resolveTodoScope, SCOPE_LABELS } from "@/lib/calendarScope";
 import { ConfirmModal } from "./ConfirmModal";
 
 interface TodoDetailSheetProps {
@@ -21,13 +22,6 @@ interface TodoDetailSheetProps {
   onDeleteTodo: (todoId: string) => void;
   onExportCalendar?: (todo: Todo) => void;
 }
-
-const SCOPE_OPTIONS = [
-  { key: "child",     label: "子供",   icon: "👧" },
-  { key: "school",    label: "保育園", icon: "🏫" },
-  { key: "family",    label: "家族",   icon: "🏠" },
-  { key: "community", label: "地域",   icon: "📍" },
-] as const;
 
 const TYPE_OPTIONS = [
   { key: "todo",     label: "やること", icon: <ClipboardList size={11} /> },
@@ -52,7 +46,6 @@ export function TodoDetailSheet({
   const [editAssignedTo, setEditAssignedTo] = useState("共通");
   const [editType, setEditType] = useState<"todo" | "shopping" | "event">("todo");
   const [editReminderAt, setEditReminderAt] = useState<"none" | "today" | "1day" | "3day">("none");
-  const [editScope, setEditScope] = useState<string>("child");
   const [isDirty, setIsDirty] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -64,7 +57,6 @@ export function TodoDetailSheet({
     setEditAssignedTo(todo.assignedTo || "共通");
     setEditType(todo.type || "todo");
     setEditReminderAt(todo.reminderAt || "none");
-    setEditScope(todo.scope ?? "child");
     setIsDirty(false);
   }, [todo?.id]);
 
@@ -76,22 +68,22 @@ export function TodoDetailSheet({
     : [];
   const overdue = isOverdue(todo.dueDate) && !todo.isCompleted;
   const hasAlarm = todo.reminderAt && todo.reminderAt !== "none";
+  const inheritedScope = resolveTodoScope(todo, entries, childProfiles);
+  const scopeMeta = SCOPE_LABELS[inheritedScope];
 
-  const scopeOption = SCOPE_OPTIONS.find((s) => s.key === editScope) ?? SCOPE_OPTIONS[0];
   const typeOption = TYPE_OPTIONS.find((t) => t.key === editType) ?? TYPE_OPTIONS[0];
 
-  const handleChange = <K extends keyof typeof draft>(key: K, value: any) => {
+  const handleChange = (
+    key: "task" | "dueDate" | "assignedTo" | "type" | "reminderAt",
+    value: string
+  ) => {
     setIsDirty(true);
     if (key === "task") setEditTask(value);
     else if (key === "dueDate") setEditDueDate(value);
     else if (key === "assignedTo") setEditAssignedTo(value);
-    else if (key === "type") setEditType(value);
-    else if (key === "reminderAt") setEditReminderAt(value);
-    else if (key === "scope") setEditScope(value);
+    else if (key === "type") setEditType(value as "todo" | "shopping" | "event");
+    else if (key === "reminderAt") setEditReminderAt(value as "none" | "today" | "1day" | "3day");
   };
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const draft = { task: editTask, dueDate: editDueDate, assignedTo: editAssignedTo, type: editType, reminderAt: editReminderAt, scope: editScope };
 
   const handleSave = () => {
     onUpdateTodo(todo.id, {
@@ -100,7 +92,6 @@ export function TodoDetailSheet({
       assignedTo: editAssignedTo as any,
       type: editType,
       reminderAt: editReminderAt,
-      scope: editScope as any,
     });
     setIsDirty(false);
     onClose();
@@ -158,21 +149,9 @@ export function TodoDetailSheet({
                   {t.icon}{t.label}
                 </button>
               ))}
-              {/* スコープ選択 */}
-              {SCOPE_OPTIONS.map((s) => (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => handleChange("scope", s.key)}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
-                    editScope === s.key
-                      ? "bg-slate-700 border-slate-700 text-white"
-                      : "bg-white border-slate-200 text-slate-400"
-                  }`}
-                >
-                  {s.icon}{s.label}
-                </button>
-              ))}
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border bg-slate-100 border-slate-200 text-slate-600">
+                {scopeMeta.icon}{scopeMeta.label}
+              </span>
             </div>
           </div>
 

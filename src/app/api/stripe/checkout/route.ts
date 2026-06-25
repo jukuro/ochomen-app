@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
+import { verifyAppInternalKey } from "@/lib/apiGuard";
 
 export async function POST(request: Request) {
+  const authError = verifyAppInternalKey(request);
+  if (authError) return authError;
   const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeSecretKey) {
     return NextResponse.json({ error: "Stripe is not configured." }, { status: 503 });

@@ -11,6 +11,7 @@ import {
 } from "@/lib/childCharacters";
 import type { UserProgress } from "@/lib/userProgress";
 import { saveUserProgress } from "@/lib/userProgress";
+import { appApiJsonHeaders } from "@/lib/apiClientHeaders";
 
 interface ChildCharacterSetupModalProps {
   open: boolean;
@@ -55,7 +56,7 @@ export function ChildCharacterSetupModal({
     try {
       const res = await fetch("/api/characterize-child", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: appApiJsonHeaders(),
         body: JSON.stringify({
           childId: child.id,
           childName: child.name,

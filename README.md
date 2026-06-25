@@ -84,11 +84,24 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIs...
 
 **③ データベーステーブルを作成**
 
-`supabase/migrations/001_initial.sql` の内容を Supabase の **SQL Editor** に貼り付けて実行します。
+Supabase の **SQL Editor** で、以下のマイグレーションを **番号順** に実行します（`003_bootstrap_note.sql` は説明のみで SQL 実行不要）。
+
+| 順序 | ファイル | 内容 |
+|---|---|---|
+| 1 | `001_initial.sql` | 基本テーブル・RLS |
+| 2 | `002_plan_stripe_rls.sql` | プラン・Stripe 連携 |
+| 3 | `004_text_ids_and_progress.sql` | テキスト ID・XP |
+| 4 | `004_fix_remaining.sql` | 004 の残修正 |
+| 5 | `005_entry_sections.sql` | お帳面セクション |
+| 6 | `006_diaries.sql` | 日記 |
+| 7 | `007_artworks.sql` | お絵描き |
+| 8 | `008_child_profile.sql` | 子どもプロフィール |
+| 9 | `009_grandparents_share.sql` | 祖父母共有 |
+| 10 | `010_calendar_feeds.sql` | Apple カレンダーフィード |
 
 > `Table Editor` > `SQL Editor` > 新規クエリを開いて貼り付け → `Run`
 
-作成されるテーブル：
+作成される主なテーブル：
 - `families` / `family_members` — 家族グループ管理
 - `children` — 子どもプロフィール
 - `entries` — スキャン書類
@@ -133,7 +146,7 @@ src/
 │   └── dates.ts            # 日付フォーマット・比較
 └── supabase/
     └── migrations/
-        └── 001_initial.sql # DB スキーマ・RLS ポリシー定義
+        ├── 001_initial.sql … 010_calendar_feeds.sql  # 番号順に適用
 ```
 
 ---
@@ -144,6 +157,7 @@ src/
 npm run dev      # 開発サーバー起動（Turbopack）
 npm run build    # 本番ビルド
 npm run lint     # ESLint チェック
+npm run typecheck # TypeScript 型チェック
 ```
 
 ---

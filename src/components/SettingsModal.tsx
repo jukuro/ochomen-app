@@ -63,7 +63,7 @@ interface SettingsModalProps {
   onToast?: (message: string, options?: { celebrate?: boolean }) => void;
   onManualSyncPull?: () => Promise<void>;
   onManualSyncPush?: () => Promise<void>;
-  onAuthSuccess?: () => Promise<void>;
+  onAuthSuccess?: () => void | Promise<void>;
   syncableEntryCount?: number;
   notificationPrefs: NotificationPrefs;
   onNotificationPrefsChange: (prefs: NotificationPrefs) => void;
@@ -195,7 +195,10 @@ export function SettingsModal({
       setCloudEntryCount(null);
       return;
     }
-    void refreshCloudCount();
+    const timer = window.setTimeout(() => {
+      void refreshCloudCount();
+    }, 1500);
+    return () => window.clearTimeout(timer);
   }, [open, currentUserEmail]);
 
   const handleAuth = async () => {
@@ -211,7 +214,7 @@ export function SettingsModal({
       setAuthPassword("");
       setAuthDisplayName("");
       if (onAuthSuccess) {
-        await onAuthSuccess();
+        void onAuthSuccess();
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

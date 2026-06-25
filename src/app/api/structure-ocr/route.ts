@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { analyzeAndStructurizeOcrText } from "@/app/ocrStructurizer";
+import { guardApiRequest } from "@/lib/apiGuard";
 import { extractTodoDrafts } from "@/lib/ocrTodoExtractor";
 
 // 過去の修正ペア群から単語レベルの補正マップを生成
@@ -28,6 +29,9 @@ function applyWordCorrections(text: string, corrections: Map<string, string>): s
 }
 
 export async function POST(request: Request) {
+  const guardError = guardApiRequest(request, "structure-ocr");
+  if (guardError) return guardError;
+
   try {
     const body = (await request.json()) as {
       rawOcrText?: unknown;

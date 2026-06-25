@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { guardApiRequest } from "@/lib/apiGuard";
 
 const apiKey = process.env.GEMINI_API_KEY || "";
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export async function POST(request: Request) {
+  const guardError = guardApiRequest(request, "diary-enrich");
+  if (guardError) return guardError;
+
   try {
     const body = (await request.json()) as {
       rawMemo?: unknown;

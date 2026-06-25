@@ -3,9 +3,11 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { FileText, Image as ImageIcon, Edit, Trash2, RefreshCw, X, ZoomIn, ChevronDown, ChevronUp, CalendarDays, ShoppingBag, ClipboardList, Bell, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
-import type { Child, Entry, EntrySection } from "@/lib/types";
+import type { Child, Entry, EntrySection, EntryScope } from "@/lib/types";
 import { formatRelativeDate, formatShortDate } from "@/lib/dates";
 import { ConfirmModal } from "./ConfirmModal";
+import { resolveEntryScope, SCOPE_LABELS } from "@/lib/calendarScope";
+import { ENTRY_SCOPE_OPTIONS } from "@/lib/scopeOptions";
 
 // ---- 検索ハイライト ----
 const READINGS: Record<string, string> = {
@@ -470,6 +472,13 @@ export function EntryCard({
   const [editOcrText, setEditOcrText] = useState(entry.ocrText);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [editDate, setEditDate] = useState(entry.date);
+  const [editScope, setEditScope] = useState<EntryScope>(() =>
+    resolveEntryScope(entry, childProfiles)
+  );
+
+  useEffect(() => {
+    setEditScope(resolveEntryScope(entry, childProfiles));
+  }, [entry.scope, entry.category, entry.todos, entry.id, childProfiles]);
 
   const validTodosAll = entry.todos?.filter((t) => t.task?.trim()) ?? [];
   // やること＝行動が必要なもの（todo/shopping）、予定＝event は分けて数える
@@ -477,6 +486,7 @@ export function EntryCard({
   const eventCount = validTodosAll.filter((t) => t.type === "event").length;
   const todoCount = validTodosAll.length;
   const previewText = entry.ocrText?.replace(/\\n/g, " ").replace(/#+\s*/g, "").replace(/\n+/g, " ").replace(/\s+/g, " ").slice(0, 45);
+  const scopeMeta = SCOPE_LABELS[resolveEntryScope(entry, childProfiles)];
 
   // スワイプで閉じる（下方向）
   const touchStartY = useRef<number | null>(null);
@@ -530,6 +540,9 @@ export function EntryCard({
           <div className="flex items-center gap-1 flex-wrap mb-0.5">
             <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-600">
               {entry.category}
+            </span>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">
+              {scopeMeta.icon} {scopeMeta.label}
             </span>
             {!entry.isRead && (
               <span className="text-xs bg-teal-500 text-white px-1.5 py-0.5 rounded-full font-bold">
@@ -681,6 +694,26 @@ export function EntryCard({
 
       {isEditing ? (
         <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200" onClick={(e) => e.stopPropagation()}>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 block mb-1">ジャンル（検索・予定の分類）</label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {ENTRY_SCOPE_OPTIONS.map(({ key, label, icon }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setEditScope(key)}
+                  className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border text-[10px] font-bold transition ${
+                    editScope === key
+                      ? "border-teal-500 bg-teal-50 text-teal-800"
+                      : "border-slate-200 bg-white text-slate-500"
+                  }`}
+                >
+                  <span className="text-base leading-none">{icon}</span>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex gap-2">
             <div className="flex-1">
               <label className="text-[10px] font-bold text-slate-400 block mb-0.5">カテゴリー</label>
@@ -757,6 +790,7 @@ export function EntryCard({
                 setEditCategory(entry.category);
                 setEditOcrText(entry.ocrText);
                 setEditDate(entry.date);
+                setEditScope(resolveEntryScope(entry, childProfiles));
               }}
               className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-300 transition"
             >
@@ -779,6 +813,7 @@ export function EntryCard({
                   category: editCategory,
                   ocrText: editOcrText,
                   date: editDate,
+                  scope: editScope,
                 });
                 setIsEditing(false);
                 setIsFullscreenEdit(false);

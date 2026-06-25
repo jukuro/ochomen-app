@@ -77,9 +77,12 @@ export async function signOut() {
  * ログイン後、family_members にレコードがなければ新規家族を作成して紐付ける。
  * すでに紐付けがあれば family_id を返す。
  */
-export async function ensureFamily(displayName: string): Promise<string | null> {
+export async function ensureFamily(
+  displayName: string,
+  sessionOverride?: Session | null
+): Promise<string | null> {
   if (!supabase) return null;
-  const session = await getSession();
+  const session = sessionOverride ?? (await getSession());
   if (!session) return null;
 
   // 既存チェック
@@ -183,9 +186,9 @@ function toLocalEntry(
   return {
     id: localId,
     childIds,
-    category: row.category as string,
-    date: row.date as string,
-    ocrText: row.ocr_text as string,
+    category: (row.category as string) || "お帳面",
+    date: (row.date as string) || new Date().toISOString().slice(0, 10),
+    ocrText: typeof row.ocr_text === "string" ? row.ocr_text : "",
     imageUrl: (row.image_url as string) || undefined,
     title: (row.title as string) || undefined,
     isRead: row.is_read as boolean,
@@ -247,7 +250,7 @@ function toLocalTodoRow(
  * Supabase から全データを取得してローカル状態に上書きする。
  * 初回サインイン後またはアプリ起動時に呼ぶ。
  */
-export async function pullFromSupabase(): Promise<{
+export async function pullFromSupabase(familyIdOverride?: string): Promise<{
   entries: Entry[];
   children: Child[];
   categories: string[];
@@ -258,7 +261,7 @@ export async function pullFromSupabase(): Promise<{
   pointsWallet?: PointsWallet;
 } | null> {
   if (!supabase) return null;
-  const familyId = await getFamilyId();
+  const familyId = familyIdOverride ?? (await getFamilyId());
   if (!familyId) return null;
 
   const [entRes, todoRes, childRes, catRes, kinderRes, famRes, diaryRes, artRes] = await Promise.all([
@@ -336,6 +339,45 @@ export async function pullFromSupabase(): Promise<{
       );
 
   return { entries, children, categories, kindergartenName, diaries, artworks, userProgress, pointsWallet };
+}
+
+export type CloudPullPayload = NonNullable<Awaited<ReturnType<typeof pullFromSupabase>>>;
+
+let authCloudSyncLock = false;
+let lastAuthCloudSyncAt = 0;
+const AUTH_CLOUD_SYNC_COOLDOWN_MS = 8000;
+
+/**
+ * ログイン直後のクラウド pull（重複・同時実行を抑止）。
+ * Supabase 推奨: onAuthStateChange 内では setTimeout 経由で呼ぶこと。
+ */
+export async function syncCloudAfterAuth(
+  displayName = "ユーザー",
+  session?: Session | null
+): Promise<CloudPullPayload | null> {
+  if (!supabase) return null;
+  const now = Date.now();
+  if (authCloudSyncLock || now - lastAuthCloudSyncAt < AUTH_CLOUD_SYNC_COOLDOWN_MS) {
+    return null;
+  }
+  authCloudSyncLock = true;
+  try {
+    const result = await Promise.race([
+      (async (): Promise<CloudPullPayload | null> => {
+        const familyId = await ensureFamily(displayName, session);
+        if (!familyId) return null;
+        return pullFromSupabase(familyId);
+      })(),
+      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 10000)),
+    ]);
+    if (result) lastAuthCloudSyncAt = Date.now();
+    return result;
+  } catch (err) {
+    console.warn("[Supabase] auth sync failed:", err);
+    return null;
+  } finally {
+    authCloudSyncLock = false;
+  }
 }
 
 function parseUserProgress(raw: unknown): UserProgress | undefined {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, startTransition } from "react";
 import { createPortal } from "react-dom";
 import {
   Settings,
@@ -28,7 +28,7 @@ import {
   Users,
   SlidersHorizontal,
 } from "lucide-react";
-import type { Todo, Entry, Child, Screen, MemorySubview, TodoDraft, Member, Diary, Artwork, CaptureDoc, CapturePage } from "@/lib/types";
+import type { Todo, Entry, Child, Screen, MemorySubview, TodoDraft, Member, Diary, Artwork, CaptureDoc, CapturePage, EntryScope } from "@/lib/types";
 import { APP_TODAY, isOverdue, isToday, isTomorrow } from "@/lib/dates";
 import {
   localAppStateStore,
@@ -57,7 +57,7 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { NotificationBootstrap } from "@/components/NotificationBootstrap";
 import { PwaInstallBootstrap } from "@/components/PwaInstallBootstrap";
 import { AddToHomeScreenInvite } from "@/components/AddToHomeScreenInvite";
-import { shouldInviteInstall, getDeferredInstallPrompt, triggerPwaInstall } from "@/lib/pwaInstall";
+import { shouldInviteInstall } from "@/lib/pwaInstall";
 import { CalendarSyncBootstrap } from "@/components/CalendarSyncBootstrap";
 import {
   DEFAULT_NOTIFICATION_PREFS,
@@ -120,8 +120,13 @@ import { loadCorrectionPairs } from "@/lib/corrections";
 import { loadDiaries, saveDiaries, mergeCloudDiaries } from "@/lib/diaryStorage";
 import { loadArtworks, saveArtworks, mergeCloudArtworks } from "@/lib/artworkStorage";
 import { downloadTodoAsIcs } from "@/lib/calendarExport";
+import { appApiJsonHeaders } from "@/lib/apiClientHeaders";
+import { CalendarDayDetailSheet } from "@/components/CalendarDayDetailSheet";
+import { getTodoChipClass, inferScopeFromCategory, todoMatchesScopeFilter, entryMatchesScopeFilter, sortEntriesByDateDesc, sortTodosByDateDesc, searchScopeFilterLabel, normalizeEntriesScope } from "@/lib/calendarScope";
 import { MascotCharacter } from "@/components/MascotCharacter";
 import { ScanCelebrationOverlay } from "@/components/ScanCelebrationOverlay";
+import { CalendarContextBar } from "@/components/CalendarContextBar";
+import { SearchScopeTiles } from "@/components/SearchScopeTiles";
 import { ScreenContextBar } from "@/components/ScreenContextBar";
 import {
   isSupabaseConfigured,
@@ -129,6 +134,7 @@ import {
   pullFromSupabase,
   pushToSupabase,
   ensureFamily,
+  syncCloudAfterAuth,
   syncPushWithStatus,
   syncPullWithStatus,
   mergeUserProgress,
@@ -178,6 +184,7 @@ export default function App() {
   const [showInstallInvite, setShowInstallInvite] = useState(false);
   const [isBatchOpen, setIsBatchOpen] = useState(false);
   const [captureDocs, setCaptureDocs] = useState<CaptureDoc[]>([]);
+  const [batchDocScope, setBatchDocScope] = useState<EntryScope>("school");
   const [batchProcessing, setBatchProcessing] = useState(false);
   const [batchConfirmMode, setBatchConfirmMode] = useState(false);
   const [scanMode, setScanMode] = useState<"quick" | "full">("full");
@@ -187,6 +194,7 @@ export default function App() {
   const [timelineBrowseFilter, setTimelineBrowseFilter] = useState<BrowseCategoryId>("all");
   const [timelineSearchText, setTimelineSearchText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchScopeFilter, setSearchScopeFilter] = useState<string>("all");
   const [highlightTodoId, setHighlightTodoId] = useState<string | null>(null);
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   const [openEntryHighlight, setOpenEntryHighlight] = useState<string>("");
@@ -203,6 +211,14 @@ export default function App() {
   const premiumBypassEnabled = isPremiumBypassEnabled();
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [searchActive, setSearchActive] = useState(false);
+
+  // メニュー切替時は検索オーバーレイを閉じる
+  useEffect(() => {
+    setSearchActive(false);
+    setSearchQuery("");
+    setSearchScopeFilter("all");
+  }, [currentScreen]);
+
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [editingCategoryIdx, setEditingCategoryIdx] = useState<number | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
@@ -297,6 +313,7 @@ export default function App() {
   const [sourceNavTodo, setSourceNavTodo] = useState<import("@/lib/types").Todo | null>(null);
   // "all" | "school" | "family" | "community" | childId（例: "c1"）
   const [calendarScopeFilter, setCalendarScopeFilter] = useState<string>("all");
+  const [calendarControlsExpanded, setCalendarControlsExpanded] = useState(false);
   const [currentPlan, setCurrentPlan] = useState<PlanId>("free");
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [premiumTrigger, setPremiumTrigger] = useState<string | undefined>(undefined);
@@ -304,6 +321,8 @@ export default function App() {
   const [stripeCustomerId, setStripeCustomerId] = useState<string | undefined>(undefined);
   const [characterSetupChild, setCharacterSetupChild] = useState<Child | null>(null);
   const [profileEditChild, setProfileEditChild] = useState<Child | null>(null);
+  /** クラウド pull 直後は push を抑止（ログイン時の push/pull 競合防止） */
+  const skipCloudPushUntilRef = useRef(0);
 
   const persistState = useCallback(
     (overrides?: Partial<AppState>) => {
@@ -319,6 +338,9 @@ export default function App() {
         ...overrides,
       };
       localAppStateStore.save(state);
+      if (isSupabaseConfigured && Date.now() < skipCloudPushUntilRef.current) {
+        return;
+      }
       if (isSupabaseConfigured) {
         pushToSupabase({
           ...state,
@@ -340,6 +362,8 @@ export default function App() {
 
   const applyCloudRemote = useCallback(
     (remote: NonNullable<Awaited<ReturnType<typeof pullFromSupabase>>>) => {
+      try {
+        skipCloudPushUntilRef.current = Date.now() + 10000;
       const localState = localAppStateStore.load();
       const localEntries = migrateEntries(localState?.entries ?? entries).entries;
       const remoteEntries = migrateEntries(remote.entries).entries;
@@ -348,35 +372,36 @@ export default function App() {
       const pickCategories = mergeCloudCategories(localState?.categories ?? categories, remote.categories);
       const pickKindergarten = remote.kindergartenName || localState?.kindergartenName || kindergartenName;
       const mergedEntries = normalizeAllEntries(
-        mergeCloudEntries(localEntries, remoteEntries),
+        normalizeEntriesScope(mergeCloudEntries(localEntries, remoteEntries)),
         mergedChildren.length > 0 ? mergedChildren : DEMO_CHILDREN
       );
       const pickChildren = resolveChildrenProfiles(mergedChildren, mergedEntries);
       const pickEntries = normalizeAllEntries(mergedEntries, pickChildren);
 
-      setEntries(pickEntries);
-      if (pickChildren.length > 0) {
-        setChildren(pickChildren);
-        setSelectedChildIds(pickChildren.map((c) => c.id));
-        setTargetChildIds(pickChildren.map((c) => c.id));
-        setShowOnboarding(false);
-      }
-      if (pickCategories.length > 0) setCategories(pickCategories);
-      if (pickKindergarten) setKindergartenName(pickKindergarten);
-
       const mergedProgress = mergeUserProgress(loadUserProgress(), remote.userProgress);
-      saveUserProgress(mergedProgress);
-      setUserProgress(mergedProgress);
       const mergedPoints = mergePointsWallet(loadPointsWallet(), remote.pointsWallet);
-      savePointsWallet(mergedPoints);
-      setPointsWallet(mergedPoints);
-
       const pickDiaries = mergeCloudDiaries(loadDiaries(), remote.diaries ?? []);
-      setDiaries(pickDiaries);
-      saveDiaries(pickDiaries);
-
       const pickArtworks = mergeCloudArtworks(loadArtworks(), remote.artworks ?? []);
-      setArtworks(pickArtworks);
+
+      startTransition(() => {
+        setEntries(pickEntries);
+        if (pickChildren.length > 0) {
+          setChildren(pickChildren);
+          setSelectedChildIds(pickChildren.map((c) => c.id));
+          setTargetChildIds(pickChildren.map((c) => c.id));
+          setShowOnboarding(false);
+        }
+        if (pickCategories.length > 0) setCategories(pickCategories);
+        if (pickKindergarten) setKindergartenName(pickKindergarten);
+        setUserProgress(mergedProgress);
+        setPointsWallet(mergedPoints);
+        setDiaries(pickDiaries);
+        setArtworks(pickArtworks);
+      });
+
+      saveUserProgress(mergedProgress);
+      savePointsWallet(mergedPoints);
+      saveDiaries(pickDiaries);
       saveArtworks(pickArtworks);
 
       localAppStateStore.save({
@@ -389,6 +414,9 @@ export default function App() {
         plan: localState?.plan ?? currentPlan,
         stripeCustomerId: localState?.stripeCustomerId ?? stripeCustomerId,
       });
+      } catch (err) {
+        console.warn("[applyCloudRemote] failed:", err);
+      }
     },
     [children, categories, entries, kindergartenName, scanUsage, currentPlan, stripeCustomerId]
   );
@@ -414,7 +442,7 @@ export default function App() {
           const { entries: migratedEntries, migratedCount } = migrateEntries(localState.entries);
           const seedChildren =
             localState.children.length > 0 ? localState.children : DEMO_CHILDREN;
-          loadedEntries = normalizeAllEntries(migratedEntries, seedChildren);
+          loadedEntries = normalizeAllEntries(normalizeEntriesScope(migratedEntries), seedChildren);
           loadedChildren = resolveChildrenProfiles(localState.children, loadedEntries);
           loadedEntries = normalizeAllEntries(loadedEntries, loadedChildren);
           loadedCategories = localState.categories;
@@ -442,7 +470,9 @@ export default function App() {
             }
 
             if (localState.plan === "premium" && localState.stripeCustomerId && !isPremiumBypassActive()) {
-              fetch(`/api/stripe/verify?customerId=${localState.stripeCustomerId}`)
+              fetch(`/api/stripe/verify?customerId=${encodeURIComponent(localState.stripeCustomerId)}`, {
+                headers: appApiJsonHeaders(),
+              })
                 .then((r) => r.json())
                 .then((d: { plan?: string }) => {
                   if (d.plan === "free") {
@@ -462,28 +492,37 @@ export default function App() {
         loadedChildren = resolveChildrenProfiles([], loadedEntries);
       }
 
-      // Stripe 決済完了リダイレクト検出（?upgraded=true）
+      // Stripe 決済完了リダイレクト検出（?upgraded=true&session_id=...）
       if (typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
         if (params.get("upgraded") === "true") {
-          const sessionId = params.get("session_id") ?? undefined;
-          clearPremiumBypassActive();
-          setCurrentPlan("premium");
-          showToast("🎉 プレミアムプランが有効になりました！");
+          const sessionId = params.get("session_id");
           window.history.replaceState({}, "", window.location.pathname);
 
-          // セッションから customer_id を取得して保存
-          if (sessionId) {
-            fetch(`/api/stripe/session?sessionId=${sessionId}`)
-              .then((r) => r.json())
-              .then((d: { customerId?: string; error?: string }) => {
-                if (d.customerId) {
-                  setStripeCustomerId(d.customerId);
-                } else {
-                  console.warn("Stripe session: customer_id not found", d);
-                }
-              })
-              .catch((e) => console.warn("Stripe session fetch error:", e));
+          if (!sessionId) {
+            if (!cancelled) showToast("決済情報を確認できませんでした");
+          } else {
+            try {
+              const r = await fetch(
+                `/api/stripe/session?sessionId=${encodeURIComponent(sessionId)}`,
+                { headers: appApiJsonHeaders() }
+              );
+              const d = (await r.json()) as {
+                customerId?: string;
+                isPremiumEligible?: boolean;
+                error?: string;
+              };
+              if (!cancelled && r.ok && d.isPremiumEligible) {
+                clearPremiumBypassActive();
+                setCurrentPlan("premium");
+                if (d.customerId) setStripeCustomerId(d.customerId);
+                showToast("🎉 プレミアムプランが有効になりました！");
+              } else if (!cancelled) {
+                showToast("決済の確認ができませんでした。しばらく待ってから再度お試しください。");
+              }
+            } catch {
+              if (!cancelled) showToast("決済情報の取得に失敗しました");
+            }
           }
         } else if (params.get("upgrade_canceled") === "true") {
           showToast("アップグレードをキャンセルしました");
@@ -518,13 +557,13 @@ export default function App() {
 
       if (isSupabaseConfigured) {
         try {
-          const session = await getSession();
-          if (session) {
-            await ensureFamily("ユーザー");
-            const remote = await pullFromSupabase();
-            if (remote && !cancelled) {
-              applyCloudRemoteRef.current(remote);
-            }
+          const session = await Promise.race([
+            getSession(),
+            new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 4000)),
+          ]);
+          if (session && !cancelled) {
+            const remote = await syncCloudAfterAuth("ユーザー", session);
+            if (remote) applyCloudRemoteRef.current(remote);
           }
         } catch {
           /* Supabase 未ログインやネットワークエラーは無視 */
@@ -547,27 +586,27 @@ export default function App() {
 
     // Supabase Auth の変化を購読: ログインしたらデータを pull
     if (isSupabaseConfigured && supabase) {
-      const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
-        if ((event === "SIGNED_IN" || event === "INITIAL_SESSION") && session && !cancelled) {
-          await ensureFamily("ユーザー");
-          const remote = await pullFromSupabase();
-          if (remote) applyCloudRemoteRef.current(remote);
-          // 実際のログイン操作時のみ「ホーム画面に追加」を促す（セッション自動復元では出さない）
-          if (event === "SIGNED_IN" && shouldInviteInstall()) {
-            window.setTimeout(async () => {
-              if (cancelled || !shouldInviteInstall()) return;
-              // OS の追加ダイアログを直接開けるなら自動で開く（ユーザーは「追加」を1回押すだけ）
-              if (getDeferredInstallPrompt()) {
-                const outcome = await triggerPwaInstall();
-                if (outcome === "accepted") {
-                  showToast("ホーム画面に追加しました 🎉");
-                  return;
-                }
-                // dismissed / 失敗時は案内モーダルにフォールバック
-              }
-              if (!cancelled) setShowInstallInvite(true);
-            }, 1200);
-          }
+      const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+        if (!session || cancelled) return;
+        // 明示ログイン時のみ同期（起動時のセッション復元は init が担当）
+        if (event !== "SIGNED_IN") return;
+
+        // Supabase 推奨: 認証コールバック完了後に遅延実行（getSession デッドロック防止）
+        window.setTimeout(() => {
+          if (cancelled) return;
+          void syncCloudAfterAuth("ユーザー", session)
+            .then((remote) => {
+              if (remote && !cancelled) applyCloudRemoteRef.current(remote);
+            })
+            .catch(() => {
+              /* ignore */
+            });
+        }, 300);
+
+        if (shouldInviteInstall()) {
+          window.setTimeout(() => {
+            if (!cancelled && shouldInviteInstall()) setShowInstallInvite(true);
+          }, 5000);
         }
       });
       return () => {
@@ -809,16 +848,9 @@ export default function App() {
     showToast(result.message, result.ok ? { celebrate: true } : undefined);
   }, [applyCloudRemote]);
 
-  const handleCloudLogin = useCallback(async () => {
-    await ensureFamily("ユーザー");
-    const remote = await pullFromSupabase();
-    if (remote) {
-      applyCloudRemote(remote);
-      showToast(`クラウドから ${remote.entries.length} 件を取り込みました`, { celebrate: true });
-    } else {
-      showToast("クラウドにデータがまだありません。スマホから「今すぐクラウドへ送る」を実行してください");
-    }
-  }, [applyCloudRemote]);
+  const handleCloudLogin = useCallback(() => {
+    showToast("クラウドと同期しています…");
+  }, []);
 
   const openBatchScan = () => {
     if (entries.filter((e) => e.id !== "manual" && e.id !== "manual_shopping").length >= planLimits.maxEntries) {
@@ -982,13 +1014,11 @@ export default function App() {
     showToast(`${name}さんを家族メンバーに追加しました`);
   };
 
-  const appInternalKey = process.env.NEXT_PUBLIC_APP_KEY ?? "";
-
   /** ScanModal 側で圧縮・回転済みの base64 を受け取ってAPIに投げる */
   const runScanApi = async (base64: string, mimeType: string) => {
     const response = await fetch("/api/scan-image", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(appInternalKey ? { "x-app-key": appInternalKey } : {}) },
+      headers: appApiJsonHeaders(),
       // すぐ登録のカテゴリー提案は定番リストから選ばせる（乱立防止）
       body: JSON.stringify({
         base64,
@@ -1095,7 +1125,12 @@ export default function App() {
     const entryId = createLocalId("entry");
     const isYearlyPlan = ocrTextResult.includes("年間主要行事予定");
 
-    const generatedTodos = mapDraftsToTodos(todoDrafts, entryId, () => createLocalId("todo"));
+    const entryScope = inferScopeFromCategory(selectedCategory);
+    const generatedTodos = mapDraftsToTodos(
+      todoDrafts,
+      entryId,
+      () => createLocalId("todo")
+    );
 
     const newEntry: Entry = {
       id: entryId,
@@ -1106,6 +1141,7 @@ export default function App() {
       imageUrl: scannedImage || undefined,
       todos: generatedTodos.length > 0 ? generatedTodos : undefined,
       isRead: false,
+      scope: entryScope,
     };
 
     setEntries((prev) => {
@@ -1130,6 +1166,7 @@ export default function App() {
     const entryId = createLocalId("entry");
 
     // すぐ登録でもAIが抽出したやること・買い物・予定は自動で登録する
+    const entryScope = inferScopeFromCategory(cat);
     const generatedTodos: Todo[] = todoDrafts
       .filter((draft) => draft.task.trim())
       .map((draft) => ({
@@ -1154,6 +1191,7 @@ export default function App() {
       todos: generatedTodos.length > 0 ? generatedTodos : undefined,
       isRead: false,
       title: title || undefined,
+      scope: entryScope,
     };
     setEntries((prev) => {
       const next = [newEntry, ...prev];
@@ -1223,7 +1261,7 @@ export default function App() {
   const scanDoc = async (doc: CaptureDoc) => {
     const response = await fetch("/api/scan-image", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(appInternalKey ? { "x-app-key": appInternalKey } : {}) },
+      headers: appApiJsonHeaders(),
       body: JSON.stringify({
         images: doc.pages.map((p) => ({ base64: p.base64, mimeType: p.mimeType })),
         categoryName: "未分類",
@@ -1254,7 +1292,8 @@ export default function App() {
     cat: string,
     ocrText: string,
     drafts: TodoDraft[],
-    childIds: string[]
+    childIds: string[],
+    scope: EntryScope
   ): number => {
     setCategories((prev) => (prev.includes(cat) ? prev : [...prev, cat]));
     const rawTodos = mapDraftsToTodos(drafts, "pending", () => createLocalId("todo"));
@@ -1268,6 +1307,7 @@ export default function App() {
       isRead: false,
       title: title || undefined,
       sections: doc.sections,
+      scope,
     };
     const expanded = expandEntriesBySectionDates(template, () => createLocalId("entry")).map((entry) => ({
       ...entry,
@@ -1368,18 +1408,21 @@ export default function App() {
 
         setCaptureDocs((prev) =>
           prev.map((d) =>
-            d.id === doc.id ? { ...d, status: "done", title: title || cat, category: cat, ocrText, todoDrafts: drafts, sections } : d
+            d.id === doc.id
+              ? { ...d, status: "done", title: title || cat, category: cat, ocrText, todoDrafts: drafts, sections, scope: batchDocScope }
+              : d
           )
         );
 
         if (autoCommit) {
           const created = createEntryFromDoc(
-            { ...doc, sections },
+            { ...doc, sections, scope: batchDocScope },
             title,
             cat,
             ocrText,
             drafts,
-            childIds
+            childIds,
+            batchDocScope
           );
           if (created > 1) showToast(`お帳面を${created}日分に分けて登録しました`);
         }
@@ -1433,13 +1476,15 @@ export default function App() {
     const doneDocs = captureDocs.filter((d) => d.status === "done");
     let splitEntryTotal = 0;
     doneDocs.forEach((doc) => {
+      const scope = doc.scope ?? batchDocScope;
       splitEntryTotal += createEntryFromDoc(
         doc,
         (doc.title || "").trim(),
         (doc.category || "その他").trim() || "その他",
         doc.ocrText || "",
         doc.todoDrafts || [],
-        childIds
+        childIds,
+        scope
       );
     });
     if (splitEntryTotal > doneDocs.length) {
@@ -1501,17 +1546,21 @@ export default function App() {
     return true;
   };
 
-  const handleAddTodoFromCalendar = () => {
-    if (!calendarQuickTask.trim() || !calendarQuickAddDate) return;
+  const addTodoFromCalendar = (
+    task: string,
+    dueDate: string,
+    type: "todo" | "event" | "shopping" = calendarQuickType
+  ) => {
+    if (!task.trim() || !dueDate) return;
     const entryId = "manual";
     const newTodo: Todo = {
       id: createLocalId("todo"),
-      task: calendarQuickTask.trim(),
-      dueDate: calendarQuickAddDate,
+      task: task.trim(),
+      dueDate,
       isCompleted: false,
       assignedTo: selectedChildIds.length > 0 ? children.find((c) => c.id === selectedChildIds[0])?.name || "共通" : "共通",
       originalEntryId: entryId,
-      type: calendarQuickType,
+      type,
       reminderAt: "none",
     };
 
@@ -1519,7 +1568,11 @@ export default function App() {
     if (existingManualIdx > -1) {
       const updated = [...entries];
       const prev = updated[existingManualIdx];
-      updated[existingManualIdx] = { ...prev, todos: [...(prev.todos || []), newTodo] };
+      updated[existingManualIdx] = {
+        ...prev,
+        scope: prev.scope ?? "family",
+        todos: [...(prev.todos || []), newTodo],
+      };
       setEntries(updated);
     } else {
       const newEntry: Entry = {
@@ -1530,12 +1583,18 @@ export default function App() {
         ocrText: "### 手動追加したやること\nカレンダーから手動で追加したタスクです。",
         todos: [newTodo],
         isRead: true,
+        scope: "family",
       };
       setEntries([newEntry, ...entries]);
     }
     setCalendarQuickTask("");
     setCalendarQuickAddDate(null);
-    showToast("やることを追加しました");
+    showToast("予定を追加しました");
+  };
+
+  const handleAddTodoFromCalendar = () => {
+    if (!calendarQuickTask.trim() || !calendarQuickAddDate) return;
+    addTodoFromCalendar(calendarQuickTask, calendarQuickAddDate, calendarQuickType);
   };
 
   const handleStartRecording = () => {
@@ -1620,7 +1679,7 @@ export default function App() {
       const childName = childObj ? childObj.name.split(" ")[0] : "こども";
       const response = await fetch("/api/diary-enrich", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: appApiJsonHeaders(),
         body: JSON.stringify({
           rawMemo: memoText,
           stretchLevel: diaryStretchLevel,
@@ -1742,7 +1801,11 @@ export default function App() {
 
   const handleUpdateEntry = (entryId: string, updatedFields: Partial<Entry>) => {
     setEntries((currentEntries) =>
-      currentEntries.map((e) => (e.id === entryId ? { ...e, ...updatedFields } : e))
+      currentEntries.map((e) => {
+        if (e.id !== entryId) return e;
+        const next: Entry = { ...e, ...updatedFields };
+        return next;
+      })
     );
     showToast("お便りの内容を更新しました");
   };
@@ -1784,7 +1847,9 @@ export default function App() {
     ) {
       void deleteGoogleCalendarTodoEvent(googleCalendarTokens, target.googleEventId)
         .then((tokens) => setGoogleCalendarTokens(tokens))
-        .catch(() => {});
+        .catch(() => {
+          showToast("Googleカレンダーからの削除に失敗しました（端末上は削除済み）");
+        });
     }
   };
 
@@ -1837,36 +1902,8 @@ export default function App() {
     allTodos.filter((todo) => todo.dueDate === dateStr);
 
   /** カレンダー用スコープ・子供フィルター */
-  const filterByScope = (todos: Todo[]) => {
-    if (calendarScopeFilter === "all") return todos;
-    // Google 取込・手動予定は「すべて」「家族」で表示
-    if (calendarScopeFilter === "family") {
-      return todos.filter(
-        (t) =>
-          t.originalEntryId === "manual" ||
-          t.importedFromGoogle ||
-          t.scope === "family"
-      );
-    }
-    // 子供 ID でのフィルター
-    const isChildId = children.some((c) => c.id === calendarScopeFilter);
-    if (isChildId) {
-      return todos.filter((t) => {
-        const entry = entries.find((e) => e.id === t.originalEntryId);
-        return entry?.childIds.includes(calendarScopeFilter) ?? false;
-      });
-    }
-    return todos.filter((t) => {
-      const scope = t.scope;
-      if (scope) return scope === calendarScopeFilter;
-      const entry = entries.find((e) => e.id === t.originalEntryId);
-      const cat = entry?.category ?? "";
-      if (calendarScopeFilter === "school") return /園|保育|幼稚|だより/.test(cat);
-      if (calendarScopeFilter === "community") return /地域|行事|町内|自治/.test(cat);
-      if (calendarScopeFilter === "family") return /家族|家庭|兄弟/.test(cat);
-      return true;
-    });
-  };
+  const filterByScope = (todos: Todo[]) =>
+    todos.filter((t) => todoMatchesScopeFilter(t, calendarScopeFilter, entries, children));
 
   const moveCalendarMonth = (delta: number) => {
     const y = calendarYear;
@@ -2026,354 +2063,6 @@ export default function App() {
           </div>
         )}
 
-        {/* カレンダー全画面モーダル */}
-        {currentScreen === "calendar" && (() => {
-          // 週ビュー用: selectedDay or todayの週の日曜〜土曜
-          const anchorDay = selectedDay || APP_TODAY;
-          const anchorDate = new Date(`${anchorDay}T00:00:00`);
-          const weekSunday = new Date(anchorDate);
-          weekSunday.setDate(anchorDate.getDate() - anchorDate.getDay());
-          const weekDays = Array.from({ length: 7 }, (_, i) => {
-            const d = new Date(weekSunday);
-            d.setDate(weekSunday.getDate() + i);
-            return d.toLocaleDateString("sv-SE");
-          });
-          const moveWeek = (delta: number) => {
-            const d = new Date(`${anchorDay}T00:00:00`);
-            d.setDate(d.getDate() + delta * 7);
-            setSelectedDay(d.toLocaleDateString("sv-SE"));
-          };
-          const moveDay = (delta: number) => {
-            const d = new Date(`${anchorDay}T00:00:00`);
-            d.setDate(d.getDate() + delta);
-            setSelectedDay(d.toLocaleDateString("sv-SE"));
-          };
-
-          const viewLabel = calendarViewMode === "month" ? calendarLabel
-            : calendarViewMode === "week" ? `${Number(weekDays[0].slice(5,7))}/${Number(weekDays[0].slice(8,10))}〜${Number(weekDays[6].slice(5,7))}/${Number(weekDays[6].slice(8,10))}`
-            : `${Number(anchorDay.slice(5,7))}月${Number(anchorDay.slice(8,10))}日`;
-
-          const handleCalSwipeStart = (e: React.TouchEvent) => { calSwipeStartX.current = e.touches[0].clientX; };
-          const handleCalSwipeEnd = (e: React.TouchEvent) => {
-            if (calSwipeStartX.current === null) return;
-            const dx = e.changedTouches[0].clientX - calSwipeStartX.current;
-            calSwipeStartX.current = null;
-            if (Math.abs(dx) < 50) return;
-            const dir = dx < 0 ? 1 : -1;
-            if (calendarViewMode === "month") moveCalendarMonth(dir);
-            else if (calendarViewMode === "week") moveWeek(dir);
-            else moveDay(dir);
-          };
-
-          return (
-          <div
-            className="fixed inset-0 z-50 bg-white flex flex-col"
-            style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
-            onTouchStart={handleCalSwipeStart}
-            onTouchEnd={handleCalSwipeEnd}
-          >
-            {/* ヘッダー */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-white">
-              <button type="button" onClick={() =>
-                calendarViewMode === "month" ? moveCalendarMonth(-1) :
-                calendarViewMode === "week" ? moveWeek(-1) : moveDay(-1)
-              } className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold flex items-center justify-center text-sm">←</button>
-              <span className="flex-1 text-center text-sm font-bold text-slate-800">{viewLabel}</span>
-              <button type="button" onClick={() =>
-                calendarViewMode === "month" ? moveCalendarMonth(1) :
-                calendarViewMode === "week" ? moveWeek(1) : moveDay(1)
-              } className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold flex items-center justify-center text-sm">→</button>
-              <button type="button" onClick={() => setCurrentScreen("home")} className="text-slate-400 hover:text-slate-700 p-1 ml-1" aria-label="閉じる"><X size={20} /></button>
-            </div>
-
-            {/* ビュー切り替えタブ */}
-            <div className="flex bg-slate-100 mx-3 mt-2 mb-1 rounded-xl p-0.5 text-xs font-bold">
-              {(["month", "week", "day"] as const).map((v) => (
-                <button key={v} type="button" onClick={() => setCalendarViewMode(v)}
-                  className={`flex-1 py-1.5 rounded-lg transition ${calendarViewMode === v ? "bg-white text-teal-700 shadow" : "text-slate-400"}`}>
-                  {v === "month" ? "月" : v === "week" ? "週" : "日"}
-                </button>
-              ))}
-            </div>
-
-            {/* 月ビュー: カレンダー ⇔ リスト（全画面どちらか一方） */}
-            {calendarViewMode === "month" && (
-              <div className="flex bg-slate-100 mx-3 mb-1 rounded-xl p-0.5 text-xs font-bold">
-                <button
-                  type="button"
-                  onClick={() => setCalendarListOnly(false)}
-                  className={`flex-1 py-1.5 rounded-lg transition ${!calendarListOnly ? "bg-white text-teal-700 shadow" : "text-slate-400"}`}
-                >
-                  カレンダー
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCalendarListOnly(true)}
-                  className={`flex-1 py-1.5 rounded-lg transition ${calendarListOnly ? "bg-white text-teal-700 shadow" : "text-slate-400"}`}
-                >
-                  リスト
-                </button>
-              </div>
-            )}
-
-            {/* スコープ・子供フィルター（全画面共通） */}
-            <div className="flex gap-1.5 overflow-x-auto px-3 pb-2 flex-shrink-0">
-              {[
-                { key: "all",       label: "すべて", icon: "📋" },
-                { key: "school",    label: "保育園", icon: "🏫" },
-                { key: "family",    label: "家族",   icon: "🏠" },
-                { key: "community", label: "地域",   icon: "📍" },
-              ].map(({ key, label, icon }) => (
-                <button key={key} type="button" onClick={() => setCalendarScopeFilter(key)}
-                  className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border transition ${
-                    calendarScopeFilter === key ? "bg-teal-600 text-white border-teal-600" : "bg-white text-slate-500 border-slate-200"
-                  }`}>
-                  {icon} {label}
-                </button>
-              ))}
-              {children.filter((c) => selectedChildIds.includes(c.id)).map((child) => (
-                <button key={child.id} type="button" onClick={() => setCalendarScopeFilter(child.id)}
-                  className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border transition ${
-                    calendarScopeFilter === child.id ? `text-white border-transparent ${child.color}` : "bg-white text-slate-500 border-slate-200"
-                  }`}>
-                  {child.avatar} {child.name}
-                </button>
-              ))}
-            </div>
-
-            {/* 月ビュー */}
-            {calendarViewMode === "month" && (
-              <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-                {!calendarListOnly ? (
-                <>
-                <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50 flex-shrink-0">
-                  {["日", "月", "火", "水", "木", "金", "土"].map((d, idx) => (
-                    <div key={d} className={`py-2 text-center text-xs font-bold ${idx === 0 ? "text-red-500" : idx === 6 ? "text-blue-500" : "text-slate-400"}`}>{d}</div>
-                  ))}
-                </div>
-                <div className="flex-1 overflow-y-auto min-h-0">
-                  <div className="grid grid-cols-7 border-l border-t border-slate-100 min-h-full">
-                    {Array.from({ length: calendarStartWeekday }).map((_, i) => (
-                      <div key={`blank-${i}`} className="border-r border-b border-slate-100 min-h-[72px]" />
-                    ))}
-                    {Array.from({ length: calendarDaysInMonth }).map((_, i) => {
-                      const day = i + 1;
-                      const dateStr = `${currentCalendarMonth}-${String(day).padStart(2, "0")}`;
-                      const dayTodos = filterByScope(getTasksForDate(dateStr));
-                      const isSelected = selectedDay === dateStr;
-                      const isTodayDay = dateStr === APP_TODAY;
-                      const weekdayIdx = (calendarStartWeekday + i) % 7;
-                      return (
-                        <div key={dateStr} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
-                          className={`border-r border-b border-slate-100 min-h-[72px] p-1 cursor-pointer transition ${isSelected ? "bg-teal-50" : "hover:bg-slate-50"}`}>
-                          <div className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold mx-auto mb-1 ${
-                            isSelected ? "bg-teal-600 text-white" :
-                            isTodayDay ? "bg-teal-100 text-teal-800 ring-2 ring-teal-400" :
-                            weekdayIdx === 0 ? "text-red-500" : weekdayIdx === 6 ? "text-blue-500" : "text-slate-700"
-                          }`}>{day}</div>
-                          <div className="space-y-0.5">
-                            {dayTodos.slice(0, 2).map((todo) => (
-                              <div key={todo.id} className={`text-[9px] text-white rounded px-1 py-0.5 truncate leading-tight ${
-                                todo.type === "event" ? "bg-blue-500" : todo.type === "shopping" ? "bg-amber-500" : "bg-teal-600"
-                              }`}>{todo.task}</div>
-                            ))}
-                            {dayTodos.length > 2 && <div className="text-[9px] text-slate-400 text-center">+{dayTodos.length - 2}</div>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                </>
-                ) : (
-                <div className="flex-1 overflow-y-auto min-h-0 bg-white">
-                  <div className="p-3 space-y-1">
-                    {(() => {
-                      // 今月の全日程をまとめてリスト化
-                      const monthDays = Array.from({ length: calendarDaysInMonth }, (_, i) => {
-                        const d = i + 1;
-                        return `${currentCalendarMonth}-${String(d).padStart(2, "0")}`;
-                      });
-                      const hasAnyTodo = monthDays.some((ds) => filterByScope(getTasksForDate(ds)).length > 0);
-                      if (!hasAnyTodo) return (
-                        <p className="text-sm text-slate-400 text-center py-8">今月の予定はありません</p>
-                      );
-                      return monthDays.map((ds) => {
-                        const todos = filterByScope(getTasksForDate(ds));
-                        if (!todos.length) return null;
-                        const wd = ["日","月","火","水","木","金","土"][new Date(`${ds}T00:00:00`).getDay()];
-                        const isSelected = selectedDay === ds;
-                        const isTodayDay = ds === APP_TODAY;
-                        return (
-                          <div key={ds}>
-                            <div
-                              className={`flex items-center justify-between text-xs font-bold mt-3 mb-1 cursor-pointer ${isTodayDay ? "text-teal-700" : "text-slate-500"}`}
-                              onClick={() => setSelectedDay(isSelected ? null : ds)}
-                            >
-                              <span>{Number(ds.slice(5,7))}月{Number(ds.slice(8,10))}日（{wd}）{isTodayDay && " 今日"}</span>
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); setCalendarQuickAddDate(calendarQuickAddDate === ds ? null : ds); setSelectedDay(ds); }}
-                                className="text-teal-600 text-[10px] font-bold flex items-center gap-0.5 bg-teal-50 px-1.5 py-0.5 rounded"
-                              >
-                                <Plus size={10} /> 追加
-                              </button>
-                            </div>
-                            {calendarQuickAddDate === ds && (
-                              <div className="px-2 pt-1 pb-2 mb-1 border border-teal-100 bg-teal-50/60 rounded-xl space-y-1.5">
-                                <div className="flex gap-1">
-                                  {(["todo","event","shopping"] as const).map((t) => (
-                                    <button key={t} type="button" onClick={() => setCalendarQuickType(t)}
-                                      className={`flex-1 py-1 rounded-lg text-[10px] font-bold ${calendarQuickType === t ? "bg-teal-600 text-white" : "bg-white text-slate-400 border border-slate-200"}`}>
-                                      {t === "todo" ? "やること" : t === "event" ? "予定" : "買い物"}
-                                    </button>
-                                  ))}
-                                </div>
-                                <div className="flex gap-1.5">
-                                  <input type="text" value={calendarQuickTask} onChange={(e) => setCalendarQuickTask(e.target.value)}
-                                    onKeyDown={(e) => e.key === "Enter" && handleAddTodoFromCalendar()}
-                                    placeholder="内容を入力…" autoFocus
-                                    className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-teal-400 bg-white" />
-                                  <button type="button" onClick={handleAddTodoFromCalendar} disabled={!calendarQuickTask.trim()}
-                                    className="px-2.5 py-1.5 bg-teal-600 text-white text-xs font-bold rounded-lg disabled:opacity-40">追加</button>
-                                </div>
-                              </div>
-                            )}
-                            <div className="space-y-1.5">
-                              {todos.map((t) => (
-                                <div key={t.id}
-                                  className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm border transition ${
-                                    t.markedByUser
-                                      ? "bg-amber-50 border-amber-300 shadow-sm"
-                                      : t.type === "event" ? "bg-blue-50 border-blue-100 text-blue-800" :
-                                        t.type === "shopping" ? "bg-amber-50 border-amber-100 text-amber-800" :
-                                        "bg-teal-50 border-teal-100 text-teal-800"
-                                  }`}>
-                                  {/* ★ 参加マークボタン */}
-                                  <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); handleUpdateTodo(t.id, { markedByUser: !t.markedByUser }); }}
-                                    className={`flex-shrink-0 p-1 rounded-full transition active:scale-90 ${t.markedByUser ? "text-amber-500" : "text-slate-300 hover:text-amber-400"}`}
-                                    title={t.markedByUser ? "マーク解除" : "自分に関係ある予定としてマーク"}
-                                  >
-                                    <Star size={14} fill={t.markedByUser ? "currentColor" : "none"} />
-                                  </button>
-                                  {/* タップで詳細 */}
-                                  <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setDetailTodo(t)}>
-                                    <div className="flex items-center gap-1.5">
-                                      {t.markedByUser && <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full flex-shrink-0">参加</span>}
-                                      <span className={`font-medium truncate ${t.isCompleted ? "line-through opacity-50" : t.markedByUser ? "text-amber-900" : ""}`}>{t.task}</span>
-                                    </div>
-                                  </div>
-                                  <span className="text-[10px] opacity-60 flex-shrink-0">{t.type === "event" ? "予定" : t.type === "shopping" ? "買い物" : "やること"}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
-                </div>
-                )}
-              </div>
-            )}
-
-            {/* 週ビュー */}
-            {calendarViewMode === "week" && (
-              <div className="flex-1 overflow-y-auto">
-                <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50 sticky top-0">
-                  {weekDays.map((ds, idx) => {
-                    const wd = ["日","月","火","水","木","金","土"][idx];
-                    const isToday = ds === APP_TODAY;
-                    const isSel = ds === selectedDay;
-                    return (
-                      <div key={ds} onClick={() => setSelectedDay(ds)} className="py-2 text-center cursor-pointer">
-                        <div className={`text-[10px] font-bold ${idx===0?"text-red-500":idx===6?"text-blue-500":"text-slate-400"}`}>{wd}</div>
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold mx-auto mt-0.5 ${
-                          isSel ? "bg-teal-600 text-white" : isToday ? "bg-teal-100 text-teal-700 ring-2 ring-teal-400" : "text-slate-700"
-                        }`}>{Number(ds.slice(8,10))}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="p-3 space-y-1">
-                  {weekDays.map((ds) => {
-                    const todos = filterByScope(getTasksForDate(ds));
-                    if (!todos.length) return null;
-                    const wd = ["日","月","火","水","木","金","土"][new Date(`${ds}T00:00:00`).getDay()];
-                    return (
-                      <div key={ds}>
-                        <div className="text-xs font-bold text-slate-500 mt-3 mb-1">{Number(ds.slice(5,7))}月{Number(ds.slice(8,10))}日（{wd}）</div>
-                        <div className="space-y-1.5">
-                          {todos.map((t) => (
-                            <div key={t.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm border transition ${
-                              t.markedByUser
-                                ? "bg-amber-50 border-amber-300 shadow-sm"
-                                : t.type === "event" ? "bg-blue-50 border-blue-100 text-blue-800" :
-                                  t.type === "shopping" ? "bg-amber-50 border-amber-100 text-amber-800" :
-                                  "bg-teal-50 border-teal-100 text-teal-800"
-                            }`}>
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateTodo(t.id, { markedByUser: !t.markedByUser })}
-                                className={`flex-shrink-0 p-0.5 transition active:scale-90 ${t.markedByUser ? "text-amber-500" : "text-slate-300 hover:text-amber-400"}`}
-                              >
-                                <Star size={13} fill={t.markedByUser ? "currentColor" : "none"} />
-                              </button>
-                              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setDetailTodo(t)}>
-                                <div className="flex items-center gap-1.5">
-                                  {t.markedByUser && <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1 py-0.5 rounded-full flex-shrink-0">参加</span>}
-                                  <span className={`font-medium truncate ${t.markedByUser ? "text-amber-900" : ""}`}>{t.task}</span>
-                                </div>
-                              </div>
-                              <span className="text-xs opacity-60 flex-shrink-0">{t.type === "event" ? "予定" : t.type === "shopping" ? "買い物" : "やること"}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {weekDays.every((ds) => !getTasksForDate(ds).length) && (
-                    <p className="text-sm text-slate-400 text-center py-8">この週の予定はありません</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 日ビュー */}
-            {calendarViewMode === "day" && (
-              <div className="flex-1 overflow-y-auto p-4">
-                <div className="text-sm font-bold text-slate-700 mb-3">
-                  {Number(anchorDay.slice(5,7))}月{Number(anchorDay.slice(8,10))}日（{["日","月","火","水","木","金","土"][new Date(`${anchorDay}T00:00:00`).getDay()]}）
-                </div>
-                {filterByScope(getTasksForDate(anchorDay)).length > 0 ? (
-                  <div className="space-y-2">
-                    {filterByScope(getTasksForDate(anchorDay)).map((t) => renderTodoRow(t, "card"))}
-                  </div>
-                ) : (
-                  <div className="text-center py-16 text-slate-400">
-                    <p className="text-lg mb-2">📅</p>
-                    <p className="text-sm">この日の予定はありません</p>
-                  </div>
-                )}
-              </div>
-            )}
-            <ScreenContextBar>
-              <button
-                type="button"
-                onClick={() => {
-                  setCalendarQuickAddDate(selectedDay || APP_TODAY);
-                  setSelectedDay(selectedDay || APP_TODAY);
-                }}
-                className="mx-3 my-2.5 w-[calc(100%-1.5rem)] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1 border border-teal-200 bg-teal-50 text-teal-700"
-              >
-                <Plus size={14} /> 予定・やることを追加
-              </button>
-            </ScreenContextBar>
-          </div>
-          );
-        })()}
 
         {/* アラームバナー（非邪魔・小型） */}
         {alarmNotice && (
@@ -2482,15 +2171,39 @@ export default function App() {
               </div>
               <button
                 type="button"
-                onClick={() => setSearchActive(false)}
+                onClick={() => { setSearchActive(false); setSearchQuery(""); setSearchScopeFilter("all"); }}
                 className="text-slate-500 text-sm font-bold px-2 py-1.5 flex-shrink-0"
               >
                 閉じる
               </button>
             </div>
+            <SearchScopeTiles
+              value={searchScopeFilter}
+              onChange={setSearchScopeFilter}
+              childProfiles={children}
+              selectedChildIds={selectedChildIds}
+            />
             {/* 検索結果 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-10">
-              {searchQuery.trim() ? (() => {
+              {(() => {
+                const scopeEntries = filteredEntries
+                  .filter((e) => entryMatchesScopeFilter(e, searchScopeFilter, children))
+                  .sort(sortEntriesByDateDesc);
+                const scopeTodos = allTodos
+                  .filter((t) => todoMatchesScopeFilter(t, searchScopeFilter, entries, children))
+                  .sort(sortTodosByDateDesc);
+
+                const hasQuery = !!searchQuery.trim();
+                const hasScope = searchScopeFilter !== "all";
+
+                if (!hasQuery && !hasScope) {
+                  return (
+                    <p className="text-sm text-slate-400 text-center pt-12">
+                      キーワードを入力するか、ジャンルを選んでください
+                    </p>
+                  );
+                }
+
                 const READINGS2: Record<string, string> = {
                   "誕生日": "たんじょうび", "誕生": "たんじょう",
                   "持ち物": "もちもの", "提出": "ていしゅつ",
@@ -2514,14 +2227,27 @@ export default function App() {
                 const q2 = searchQuery.trim().toLowerCase();
                 const qn2 = normalize2(q2);
                 const hit2 = (text: string) => { const t = text.toLowerCase(); const tn = normalize2(t); return t.includes(q2) || tn.includes(qn2) || t.includes(qn2) || tn.includes(q2); };
-                const matchedTodos2 = allTodos.filter((t) => hit2(t.task));
-                const matchedEntries2 = filteredEntries.filter((e) => hit2(e.category) || hit2(e.ocrText || ""));
+
+                const matchedTodos2 = (hasQuery
+                  ? scopeTodos.filter((t) => hit2(t.task))
+                  : scopeTodos
+                ).sort(sortTodosByDateDesc);
+                const matchedEntries2 = (hasQuery
+                  ? scopeEntries.filter((e) => hit2(e.category) || hit2(e.title || "") || hit2(e.ocrText || ""))
+                  : scopeEntries
+                ).sort(sortEntriesByDateDesc);
+
                 const hasResults2 = matchedTodos2.length > 0 || matchedEntries2.length > 0;
+                const scopeLabel = searchScopeFilterLabel(searchScopeFilter, children);
+
                 return (
                   <>
                     <p className="text-xs font-bold text-slate-400">
-                      「{searchQuery}」の検索結果
-                      {hasResults2 ? ` (やること ${matchedTodos2.length}件 / 書類 ${matchedEntries2.length}件)` : " — 見つかりませんでした"}
+                      {hasQuery ? `「${searchQuery}」` : ""}
+                      {hasScope ? `${hasQuery ? " · " : ""}${scopeLabel}` : hasQuery ? "" : "すべて"}
+                      {hasResults2
+                        ? ` — やること ${matchedTodos2.length}件 / 書類 ${matchedEntries2.length}件（新しい順）`
+                        : " — 見つかりませんでした"}
                     </p>
                     {matchedTodos2.map((t) => {
                       const srcEntry = entries.find((e) => e.id === t.originalEntryId);
@@ -2546,27 +2272,33 @@ export default function App() {
                         </div>
                       );
                     })}
-                    {matchedEntries2.map((e) => (
+                    {matchedEntries2.map((e) => {
+                      const childNames = e.childIds
+                        ?.map((id) => children.find((c) => c.id === id)?.name.split(" ")[0])
+                        .filter(Boolean)
+                        .join("・");
+                      return (
                       <div key={e.id} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full">{e.category}</span>
-                          <span className="text-xs text-slate-400">{e.date}</span>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full truncate">{e.category}</span>
+                          <span className="text-xs text-slate-400 flex-shrink-0">{e.date}</span>
                         </div>
-                        <p className="text-xs text-slate-500 mt-1.5 line-clamp-2">{e.ocrText?.slice(0, 80)}...</p>
+                        {childNames && (
+                          <p className="text-[10px] text-slate-400 mt-1">{childNames}</p>
+                        )}
+                        <p className="text-xs text-slate-500 mt-1.5 line-clamp-2">{e.title || e.ocrText?.slice(0, 80) || "（内容なし）"}</p>
                         <button
                           type="button"
-                          onClick={() => { setSearchActive(false); scrollToEntry(e.id, undefined, { asOcr: true, highlightText: searchQuery }); }}
+                          onClick={() => { setSearchActive(false); scrollToEntry(e.id, undefined, { asOcr: true, highlightText: searchQuery || undefined }); }}
                           className="mt-2 text-xs text-teal-600 font-bold"
                         >
                           書類を開く ↩
                         </button>
                       </div>
-                    ))}
+                    );})}
                   </>
                 );
-              })() : (
-                <p className="text-sm text-slate-400 text-center pt-12">キーワードを入力してください</p>
-              )}
+              })()}
             </div>
           </div>
         )}
@@ -3246,7 +2978,7 @@ export default function App() {
               try {
                 const res = await fetch("/api/stripe/portal", {
                   method: "POST",
-                  headers: { "Content-Type": "application/json" },
+                  headers: appApiJsonHeaders(),
                   body: JSON.stringify({ customerId: stripeCustomerId }),
                 });
                 const data = await res.json();
@@ -3344,7 +3076,308 @@ export default function App() {
           </div>
         )}
 
-        {/* 予定タブは全画面カレンダー（上の currentScreen === "calendar" ブロック）で表示 */}
+        {/* 予定（カレンダー） */}
+        {currentScreen === "calendar" && (() => {
+          // 週ビュー用: selectedDay or todayの週の日曜〜土曜
+          const anchorDay = selectedDay || APP_TODAY;
+          const anchorDate = new Date(`${anchorDay}T00:00:00`);
+          const weekSunday = new Date(anchorDate);
+          weekSunday.setDate(anchorDate.getDate() - anchorDate.getDay());
+          const weekDays = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date(weekSunday);
+            d.setDate(weekSunday.getDate() + i);
+            return d.toLocaleDateString("sv-SE");
+          });
+          const moveWeek = (delta: number) => {
+            const d = new Date(`${anchorDay}T00:00:00`);
+            d.setDate(d.getDate() + delta * 7);
+            setSelectedDay(d.toLocaleDateString("sv-SE"));
+          };
+          const moveDay = (delta: number) => {
+            const d = new Date(`${anchorDay}T00:00:00`);
+            d.setDate(d.getDate() + delta);
+            setSelectedDay(d.toLocaleDateString("sv-SE"));
+          };
+
+          const viewLabel = calendarViewMode === "month" ? calendarLabel
+            : calendarViewMode === "week" ? `${Number(weekDays[0].slice(5,7))}/${Number(weekDays[0].slice(8,10))}〜${Number(weekDays[6].slice(5,7))}/${Number(weekDays[6].slice(8,10))}`
+            : `${Number(anchorDay.slice(5,7))}月${Number(anchorDay.slice(8,10))}日`;
+
+          const handleCalSwipeStart = (e: React.TouchEvent) => { calSwipeStartX.current = e.touches[0].clientX; };
+          const handleCalSwipeEnd = (e: React.TouchEvent) => {
+            if (calSwipeStartX.current === null) return;
+            const dx = e.changedTouches[0].clientX - calSwipeStartX.current;
+            calSwipeStartX.current = null;
+            if (Math.abs(dx) < 50) return;
+            const dir = dx < 0 ? 1 : -1;
+            if (calendarViewMode === "month") moveCalendarMonth(dir);
+            else if (calendarViewMode === "week") moveWeek(dir);
+            else moveDay(dir);
+          };
+
+          return (
+          <div
+            className="flex flex-col flex-1 min-h-0 bg-white min-w-0"
+            onTouchStart={handleCalSwipeStart}
+            onTouchEnd={handleCalSwipeEnd}
+          >
+            {/* 月ビュー */}
+            {calendarViewMode === "month" && (
+              <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                {!calendarListOnly ? (
+                <>
+                <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50 flex-shrink-0">
+                  {["日", "月", "火", "水", "木", "金", "土"].map((d, idx) => (
+                    <div key={d} className={`py-1.5 text-center text-[11px] font-bold ${idx === 0 ? "text-red-500" : idx === 6 ? "text-blue-500" : "text-slate-400"}`}>{d}</div>
+                  ))}
+                </div>
+                <div className="flex-1 overflow-y-auto min-h-0">
+                  <div className="grid grid-cols-7 border-l border-t border-slate-100 min-h-full">
+                    {Array.from({ length: calendarStartWeekday }).map((_, i) => (
+                      <div key={`blank-${i}`} className="border-r border-b border-slate-100 app-calendar-cell app-calendar-cell-blank" />
+                    ))}
+                    {Array.from({ length: calendarDaysInMonth }).map((_, i) => {
+                      const day = i + 1;
+                      const dateStr = `${currentCalendarMonth}-${String(day).padStart(2, "0")}`;
+                      const dayTodos = filterByScope(getTasksForDate(dateStr));
+                      const isSelected = selectedDay === dateStr;
+                      const isTodayDay = dateStr === APP_TODAY;
+                      const weekdayIdx = (calendarStartWeekday + i) % 7;
+                      return (
+                        <div key={dateStr} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
+                          className={`border-r border-b border-slate-100 app-calendar-cell p-1 cursor-pointer transition ${isSelected ? "bg-teal-50" : "hover:bg-slate-50"}`}>
+                          <div className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold mx-auto mb-1 ${
+                            isSelected ? "bg-teal-600 text-white" :
+                            isTodayDay ? "bg-teal-100 text-teal-800 ring-2 ring-teal-400" :
+                            weekdayIdx === 0 ? "text-red-500" : weekdayIdx === 6 ? "text-blue-500" : "text-slate-700"
+                          }`}>{day}</div>
+                          <div className="space-y-0.5">
+                            {dayTodos.slice(0, 2).map((todo) => (
+                              <div key={todo.id} className={`app-calendar-chip truncate leading-tight ${getTodoChipClass(todo, entries, children)}`}>{todo.task}</div>
+                            ))}
+                            {dayTodos.length > 2 && <div className="text-[9px] text-slate-400 text-center">+{dayTodos.length - 2}</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                </>
+                ) : (
+                <div className="flex-1 overflow-y-auto min-h-0 bg-white">
+                  <div className="p-3 space-y-1">
+                    {(() => {
+                      // 今月の全日程をまとめてリスト化
+                      const monthDays = Array.from({ length: calendarDaysInMonth }, (_, i) => {
+                        const d = i + 1;
+                        return `${currentCalendarMonth}-${String(d).padStart(2, "0")}`;
+                      });
+                      const hasAnyTodo = monthDays.some((ds) => filterByScope(getTasksForDate(ds)).length > 0);
+                      if (!hasAnyTodo) return (
+                        <p className="text-sm text-slate-400 text-center py-8">今月の予定はありません</p>
+                      );
+                      return monthDays.map((ds) => {
+                        const todos = filterByScope(getTasksForDate(ds));
+                        if (!todos.length) return null;
+                        const wd = ["日","月","火","水","木","金","土"][new Date(`${ds}T00:00:00`).getDay()];
+                        const isSelected = selectedDay === ds;
+                        const isTodayDay = ds === APP_TODAY;
+                        return (
+                          <div key={ds}>
+                            <div
+                              className={`flex items-center justify-between text-xs font-bold mt-3 mb-1 cursor-pointer ${isTodayDay ? "text-teal-700" : "text-slate-500"}`}
+                              onClick={() => setSelectedDay(isSelected ? null : ds)}
+                            >
+                              <span>{Number(ds.slice(5,7))}月{Number(ds.slice(8,10))}日（{wd}）{isTodayDay && " 今日"}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setCalendarQuickAddDate(calendarQuickAddDate === ds ? null : ds); setSelectedDay(ds); }}
+                                className="text-teal-600 text-[10px] font-bold flex items-center gap-0.5 bg-teal-50 px-1.5 py-0.5 rounded"
+                              >
+                                <Plus size={10} /> 追加
+                              </button>
+                            </div>
+                            {calendarQuickAddDate === ds && (
+                              <div className="px-2 pt-1 pb-2 mb-1 border border-teal-100 bg-teal-50/60 rounded-xl space-y-1.5">
+                                <div className="flex gap-1">
+                                  {(["todo","event","shopping"] as const).map((t) => (
+                                    <button key={t} type="button" onClick={() => setCalendarQuickType(t)}
+                                      className={`flex-1 py-1 rounded-lg text-[10px] font-bold ${calendarQuickType === t ? "bg-teal-600 text-white" : "bg-white text-slate-400 border border-slate-200"}`}>
+                                      {t === "todo" ? "やること" : t === "event" ? "予定" : "買い物"}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="flex gap-1.5">
+                                  <input type="text" value={calendarQuickTask} onChange={(e) => setCalendarQuickTask(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && handleAddTodoFromCalendar()}
+                                    placeholder="内容を入力…" autoFocus
+                                    className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-teal-400 bg-white" />
+                                  <button type="button" onClick={handleAddTodoFromCalendar} disabled={!calendarQuickTask.trim()}
+                                    className="px-2.5 py-1.5 bg-teal-600 text-white text-xs font-bold rounded-lg disabled:opacity-40">追加</button>
+                                </div>
+                              </div>
+                            )}
+                            <div className="space-y-1.5">
+                              {todos.map((t) => (
+                                <div key={t.id}
+                                  className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm border transition ${
+                                    t.markedByUser
+                                      ? "bg-amber-50 border-amber-300 shadow-sm"
+                                      : t.type === "event" ? "bg-blue-50 border-blue-100 text-blue-800" :
+                                        t.type === "shopping" ? "bg-amber-50 border-amber-100 text-amber-800" :
+                                        "bg-teal-50 border-teal-100 text-teal-800"
+                                  }`}>
+                                  {/* ★ 参加マークボタン */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); handleUpdateTodo(t.id, { markedByUser: !t.markedByUser }); }}
+                                    className={`flex-shrink-0 p-1 rounded-full transition active:scale-90 ${t.markedByUser ? "text-amber-500" : "text-slate-300 hover:text-amber-400"}`}
+                                    title={t.markedByUser ? "マーク解除" : "自分に関係ある予定としてマーク"}
+                                  >
+                                    <Star size={14} fill={t.markedByUser ? "currentColor" : "none"} />
+                                  </button>
+                                  {/* タップで詳細 */}
+                                  <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setDetailTodo(t)}>
+                                    <div className="flex items-center gap-1.5">
+                                      {t.markedByUser && <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full flex-shrink-0">参加</span>}
+                                      <span className={`font-medium truncate ${t.isCompleted ? "line-through opacity-50" : t.markedByUser ? "text-amber-900" : ""}`}>{t.task}</span>
+                                    </div>
+                                  </div>
+                                  <span className="text-[10px] opacity-60 flex-shrink-0">{t.type === "event" ? "予定" : t.type === "shopping" ? "買い物" : "やること"}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+                )}
+              </div>
+            )}
+
+            {/* 週ビュー */}
+            {calendarViewMode === "week" && (
+              <div className="flex-1 overflow-y-auto">
+                <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50 sticky top-0">
+                  {weekDays.map((ds, idx) => {
+                    const wd = ["日","月","火","水","木","金","土"][idx];
+                    const isToday = ds === APP_TODAY;
+                    const isSel = ds === selectedDay;
+                    return (
+                      <div key={ds} onClick={() => setSelectedDay(ds)} className="py-2 text-center cursor-pointer">
+                        <div className={`text-[10px] font-bold ${idx===0?"text-red-500":idx===6?"text-blue-500":"text-slate-400"}`}>{wd}</div>
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold mx-auto mt-0.5 ${
+                          isSel ? "bg-teal-600 text-white" : isToday ? "bg-teal-100 text-teal-700 ring-2 ring-teal-400" : "text-slate-700"
+                        }`}>{Number(ds.slice(8,10))}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="p-3 space-y-1">
+                  {weekDays.map((ds) => {
+                    const todos = filterByScope(getTasksForDate(ds));
+                    if (!todos.length) return null;
+                    const wd = ["日","月","火","水","木","金","土"][new Date(`${ds}T00:00:00`).getDay()];
+                    return (
+                      <div key={ds}>
+                        <div className="text-xs font-bold text-slate-500 mt-3 mb-1">{Number(ds.slice(5,7))}月{Number(ds.slice(8,10))}日（{wd}）</div>
+                        <div className="space-y-1.5">
+                          {todos.map((t) => (
+                            <div key={t.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm border transition ${
+                              t.markedByUser
+                                ? "bg-amber-50 border-amber-300 shadow-sm"
+                                : t.type === "event" ? "bg-blue-50 border-blue-100 text-blue-800" :
+                                  t.type === "shopping" ? "bg-amber-50 border-amber-100 text-amber-800" :
+                                  "bg-teal-50 border-teal-100 text-teal-800"
+                            }`}>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateTodo(t.id, { markedByUser: !t.markedByUser })}
+                                className={`flex-shrink-0 p-0.5 transition active:scale-90 ${t.markedByUser ? "text-amber-500" : "text-slate-300 hover:text-amber-400"}`}
+                              >
+                                <Star size={13} fill={t.markedByUser ? "currentColor" : "none"} />
+                              </button>
+                              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setDetailTodo(t)}>
+                                <div className="flex items-center gap-1.5">
+                                  {t.markedByUser && <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1 py-0.5 rounded-full flex-shrink-0">参加</span>}
+                                  <span className={`font-medium truncate ${t.markedByUser ? "text-amber-900" : ""}`}>{t.task}</span>
+                                </div>
+                              </div>
+                              <span className="text-xs opacity-60 flex-shrink-0">{t.type === "event" ? "予定" : t.type === "shopping" ? "買い物" : "やること"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {weekDays.every((ds) => !getTasksForDate(ds).length) && (
+                    <p className="text-sm text-slate-400 text-center py-8">この週の予定はありません</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 日ビュー */}
+            {calendarViewMode === "day" && (
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="text-sm font-bold text-slate-700 mb-3">
+                  {Number(anchorDay.slice(5,7))}月{Number(anchorDay.slice(8,10))}日（{["日","月","火","水","木","金","土"][new Date(`${anchorDay}T00:00:00`).getDay()]}）
+                </div>
+                {filterByScope(getTasksForDate(anchorDay)).length > 0 ? (
+                  <div className="space-y-2">
+                    {filterByScope(getTasksForDate(anchorDay)).map((t) => renderTodoRow(t, "card"))}
+                  </div>
+                ) : (
+                  <div className="text-center py-16 text-slate-400">
+                    <p className="text-lg mb-2">📅</p>
+                    <p className="text-sm">この日の予定はありません</p>
+                  </div>
+                )}
+              </div>
+            )}
+            {calendarViewMode === "month" && !calendarListOnly && selectedDay && (
+              <CalendarDayDetailSheet
+                dateStr={selectedDay}
+                todos={filterByScope(getTasksForDate(selectedDay))}
+                entries={entries}
+                children={children}
+                onClose={() => setSelectedDay(null)}
+                onOpenTodo={setDetailTodo}
+                onAddTodo={(task, type) => addTodoFromCalendar(task, selectedDay, type)}
+              />
+            )}
+            <CalendarContextBar
+              expanded={calendarControlsExpanded}
+              onToggleExpanded={() => setCalendarControlsExpanded((v) => !v)}
+              navLabel={viewLabel}
+              onNavPrev={() =>
+                calendarViewMode === "month" ? moveCalendarMonth(-1) :
+                calendarViewMode === "week" ? moveWeek(-1) : moveDay(-1)
+              }
+              onNavNext={() =>
+                calendarViewMode === "month" ? moveCalendarMonth(1) :
+                calendarViewMode === "week" ? moveWeek(1) : moveDay(1)
+              }
+              calendarViewMode={calendarViewMode}
+              onViewModeChange={setCalendarViewMode}
+              calendarListOnly={calendarListOnly}
+              onListOnlyChange={setCalendarListOnly}
+              calendarScopeFilter={calendarScopeFilter}
+              onScopeFilterChange={setCalendarScopeFilter}
+              childProfiles={children}
+              selectedChildIds={selectedChildIds}
+              onCollapse={() => setCalendarControlsExpanded(false)}
+              onAddClick={() => {
+                setCalendarQuickAddDate(selectedDay || APP_TODAY);
+                setSelectedDay(selectedDay || APP_TODAY);
+              }}
+            />
+          </div>
+          );
+        })()}
+
 
         {/* じぃじ・ばぁば共有 */}
         {currentScreen === "grandparents" && (
@@ -3519,6 +3552,8 @@ export default function App() {
           docs={captureDocs}
           isProcessing={batchProcessing}
           confirmMode={batchConfirmMode}
+          docScope={batchDocScope}
+          onDocScopeChange={setBatchDocScope}
           onToggleTargetChild={(childId) => {
             if (targetChildIds.includes(childId)) {
               if (targetChildIds.length > 1) {
@@ -3607,7 +3642,7 @@ export default function App() {
             try {
               const res = await fetch("/api/stripe/portal", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: appApiJsonHeaders(),
                 body: JSON.stringify({ customerId: stripeCustomerId }),
               });
               const data = await res.json() as { url?: string; error?: string };
@@ -3675,12 +3710,6 @@ export default function App() {
           premiumBypassEnabled={premiumBypassEnabled}
           onClose={() => { setShowPremiumModal(false); setPremiumTrigger(undefined); }}
           onBypassUpgrade={handleBypassPremium}
-          onUpgrade={() => {
-            clearPremiumBypassActive();
-            setCurrentPlan("premium");
-            setShowPremiumModal(false);
-            showToast("🎉 プレミアムプランが有効になりました！");
-          }}
         />
 
         {/* 「元の書類を見る」後 → document.body Portal でコンテナのoverflow-hiddenを回避 */}

@@ -1,4 +1,8 @@
-export type TodoScope = "child" | "school" | "family" | "community";
+/** 書類のジャンル。子どもは childIds で表現する。 */
+export type EntryScope = "school" | "family" | "community";
+
+/** @deprecated 旧データ互換。新規保存では使用しない。 */
+export type TodoScope = EntryScope | "child";
 
 export interface Todo {
   id: string;
@@ -9,10 +13,7 @@ export interface Todo {
   originalEntryId: string;
   type?: "todo" | "shopping" | "event";
   reminderAt?: "none" | "today" | "1day" | "3day";
-  /**
-   * イベントの対象スコープ
-   * child=子供 / school=保育園 / family=家族 / community=地域
-   */
+  /** @deprecated ジャンルは書類（Entry.scope）から継承。旧データ読み取りのみ */
   scope?: TodoScope;
   /** AIがこの日付・タスクを設定した理由 */
   reason?: string;
@@ -97,6 +98,8 @@ export interface Entry {
   title?: string;
   /** お帳面・連絡帳モード：先生と保護者のセクション分離結果 */
   sections?: EntrySection[];
+  /** 書類のジャンル。検索・カレンダー・予定表示の基準。子どもは childIds で表現。 */
+  scope?: EntryScope;
 }
 
 export interface Child {
@@ -142,4 +145,6 @@ export interface CaptureDoc {
   todoDrafts?: TodoDraft[];
   /** お帳面・連絡帳の場合：先生と保護者のセクション */
   sections?: EntrySection[];
+  /** スキャン時に選択したジャンル */
+  scope?: EntryScope;
 }

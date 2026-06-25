@@ -1,4 +1,5 @@
 import { createLocalId } from "./ids";
+import { appApiJsonHeaders } from "./apiClientHeaders";
 import type { OcrAnalysisResult, TodoDraft } from "./types";
 
 function isTodoDraftResponse(value: unknown): value is Omit<TodoDraft, "id"> {
@@ -13,7 +14,7 @@ function isTodoDraftResponse(value: unknown): value is Omit<TodoDraft, "id"> {
     typeof value.task === "string" &&
     typeof value.dueDate === "string" &&
     typeof value.assignedTo === "string" &&
-    (value.type === "todo" || value.type === "shopping") &&
+    (value.type === "todo" || value.type === "shopping" || value.type === "event") &&
     (value.reminderAt === "none" ||
       value.reminderAt === "today" ||
       value.reminderAt === "1day" ||
@@ -34,7 +35,7 @@ export async function analyzeOcrText(
 
     const response = await fetch("/api/structure-ocr", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: appApiJsonHeaders(),
       body: JSON.stringify({ rawOcrText, categoryName, corrections }),
     });
 

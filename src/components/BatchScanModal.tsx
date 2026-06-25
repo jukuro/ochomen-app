@@ -2,7 +2,8 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Camera, Loader2, Sparkles, Trash2, X, CheckCircle2, AlertCircle, Clock, Plus, RotateCw } from "lucide-react";
-import type { Child, CaptureDoc, CapturePage, EntrySection } from "@/lib/types";
+import type { Child, CaptureDoc, CapturePage, EntrySection, EntryScope } from "@/lib/types";
+import { ENTRY_SCOPE_OPTIONS } from "@/lib/scopeOptions";
 import { OcrSkeleton } from "@/components/OcrSkeleton";
 import { FullScreenScanCapture } from "@/components/FullScreenScanCapture";
 import { processScanFile } from "@/lib/documentTrim";
@@ -18,6 +19,8 @@ interface BatchScanModalProps {
   docs: CaptureDoc[];
   isProcessing: boolean;
   confirmMode: boolean;
+  docScope: EntryScope;
+  onDocScopeChange: (scope: EntryScope) => void;
   onToggleTargetChild: (childId: string) => void;
   onAddNewDoc: (pages: CapturePage[]) => void;
   onAddPageToDoc: (docId: string, page: CapturePage) => void;
@@ -39,6 +42,8 @@ export function BatchScanModal({
   docs,
   isProcessing,
   confirmMode,
+  docScope,
+  onDocScopeChange,
   onToggleTargetChild,
   onAddNewDoc,
   onAddPageToDoc,
@@ -60,8 +65,6 @@ export function BatchScanModal({
   const targetDocRef = useRef<string | null>(null);
   // 拡大プレビュー中のページ
   const [previewPage, setPreviewPage] = useState<{ docId: string; pageId: string } | null>(null);
-  // 書類の種類（スコープ）
-  const [docScope, setDocScope] = useState<"child" | "school" | "family" | "community">("school");
   const [phase, setPhase] = useState<"capture" | "review">("capture");
 
   useEffect(() => {
@@ -176,20 +179,15 @@ export function BatchScanModal({
           <div className="space-y-3">
             {/* 書類の種類（スコープ） */}
             <div>
-              <label className="text-xs font-bold text-slate-400 block mb-1.5">書類の種類</label>
-              <div className="grid grid-cols-4 gap-1.5">
-                {[
-                  { key: "school",    label: "保育園・学校", icon: "🏫", desc: "給食・行事など" },
-                  { key: "child",     label: "お子さま",     icon: "👧", desc: "個人のおたより" },
-                  { key: "community", label: "地域",         icon: "📍", desc: "町内・自治会" },
-                  { key: "family",    label: "家族",         icon: "🏠", desc: "家族の予定" },
-                ].map(({ key, label, icon, desc }) => {
+              <label className="text-xs font-bold text-slate-400 block mb-1.5">書類のジャンル</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {ENTRY_SCOPE_OPTIONS.map(({ key, label, icon, desc }) => {
                   const isSelected = docScope === key;
                   return (
                     <button
                       key={key}
                       type="button"
-                      onClick={() => setDocScope(key as any)}
+                      onClick={() => onDocScopeChange(key)}
                       className={`flex flex-col items-center py-2 px-1 rounded-xl border text-center transition ${
                         isSelected
                           ? "bg-teal-600 border-teal-600 text-white"
@@ -198,19 +196,18 @@ export function BatchScanModal({
                     >
                       <span className="text-lg">{icon}</span>
                       <span className="text-[10px] font-bold mt-0.5">{label}</span>
-                      <span className={`text-[9px] mt-0.5 ${isSelected ? "text-teal-100" : "text-slate-400"}`}>{desc}</span>
+                      {desc && (
+                        <span className={`text-[9px] mt-0.5 ${isSelected ? "text-teal-100" : "text-slate-400"}`}>{desc}</span>
+                      )}
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* 対象のお子さま（「お子さま」or「保育園・学校」選択時に表示） */}
-            {(docScope === "child" || docScope === "school") && childrenProfiles.length > 0 && (
+            {docScope === "school" && childrenProfiles.length > 0 && (
               <div>
-                <label className="text-xs font-bold text-slate-400 block mb-1.5">
-                  {docScope === "school" ? "対象の保育園・学校" : "対象のお子さま"}
-                </label>
+                <label className="text-xs font-bold text-slate-400 block mb-1.5">対象の保育園・学校</label>
                 <div className="flex gap-2 flex-wrap">
                   {childrenProfiles.map((child) => (
                     <button

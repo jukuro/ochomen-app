@@ -97,7 +97,11 @@ export function saveLocalAppState(state: AppState) {
       return rest as typeof e;
     }),
   };
-  localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(serializable));
+  try {
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(serializable));
+  } catch (err) {
+    console.warn("[localStorage] save failed:", err);
+  }
 }
 
 export function clearLocalAppState() {

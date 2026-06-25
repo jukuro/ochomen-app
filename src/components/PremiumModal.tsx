@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { X, Sparkles, Check, Lock, Loader2 } from "lucide-react";
 import { FREE_MONTHLY_SCAN_LIMIT } from "@/lib/appState";
+import { appApiJsonHeaders } from "@/lib/apiClientHeaders";
 
 export type PlanId = "free" | "premium";
 
@@ -32,8 +33,6 @@ interface PremiumModalProps {
   stripeCustomerId?: string;
   premiumBypassEnabled?: boolean;
   onClose: () => void;
-  /** Stripe Checkout 開始後に呼ばれる（Stripe 未設定時は即座に onUpgrade 扱い） */
-  onUpgrade: () => void;
   /** 動作確認用（課金なし）プレミアム有効化 */
   onBypassUpgrade?: () => void;
 }
@@ -54,7 +53,6 @@ export function PremiumModal({
   stripeCustomerId,
   premiumBypassEnabled = false,
   onClose,
-  onUpgrade,
   onBypassUpgrade,
 }: PremiumModalProps) {
   const [isLoading, setIsLoading] = useState(false);
@@ -70,17 +68,12 @@ export function PremiumModal({
     try {
       const res = await fetch("/api/stripe/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: appApiJsonHeaders(),
         body: JSON.stringify({ customerId: stripeCustomerId }),
       });
       const data = await res.json() as { url?: string; error?: string };
       if (!res.ok || !data.url) {
-        // Stripe 未設定の場合はフォールバック（onUpgrade を直接呼ぶ）
-        if (data.error?.includes("not configured")) {
-          onUpgrade();
-        } else {
-          setCheckoutError(data.error || "決済ページの準備に失敗しました");
-        }
+        setCheckoutError(data.error || "決済ページの準備に失敗しました");
         setIsLoading(false);
         return;
       }

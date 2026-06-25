@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
+import { verifyAppInternalKey } from "@/lib/apiGuard";
 
 /**
  * Stripe カスタマーポータル（解約・カード変更・請求書確認）へのセッションを作成する。
  * POST body: { customerId: string }
  */
 export async function POST(request: Request) {
+  const authError = verifyAppInternalKey(request);
+  if (authError) return authError;
   const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeSecretKey) {
     return NextResponse.json({ error: "Stripe not configured." }, { status: 503 });

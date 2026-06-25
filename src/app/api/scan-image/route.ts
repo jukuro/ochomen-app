@@ -1,16 +1,10 @@
 import { NextResponse } from "next/server";
 import { analyzeImageOcr } from "@/app/ocrStructurizer";
+import { guardApiRequest } from "@/lib/apiGuard";
 
 export async function POST(request: Request) {
-  // 不正な直接呼び出しを防ぐ簡易ガード
-  // APP_INTERNAL_KEY が設定されている場合のみ検証（未設定なら通過）
-  const requiredKey = process.env.APP_INTERNAL_KEY;
-  if (requiredKey) {
-    const clientKey = request.headers.get("x-app-key");
-    if (clientKey !== requiredKey) {
-      return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
-    }
-  }
+  const guardError = guardApiRequest(request, "scan-image");
+  if (guardError) return guardError;
 
   try {
     const body = (await request.json()) as {

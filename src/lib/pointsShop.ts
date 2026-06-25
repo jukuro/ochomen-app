@@ -119,7 +119,11 @@ export function loadPointsWallet(): PointsWallet {
 }
 
 export function savePointsWallet(wallet: PointsWallet): void {
-  localStorage.setItem(POINTS_STORAGE_KEY, JSON.stringify(wallet));
+  try {
+    localStorage.setItem(POINTS_STORAGE_KEY, JSON.stringify(wallet));
+  } catch (err) {
+    console.warn("[localStorage] save points failed:", err);
+  }
 }
 
 export function getInventoryCount(wallet: PointsWallet, itemId: string): number {

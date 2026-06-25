@@ -1,25 +1,25 @@
 "use client";
 
 import { useEffect } from "react";
+import {
+  markBootSuccess,
+  purgeServiceWorkers,
+  tryAutoRecoverFromError,
+} from "@/lib/hardReload";
 
-/** デプロイ後の古い JS チャンク不一致で白画面になるのを、1 回だけ自動再読み込みで回復 */
+/** デプロイ後のチャンク不一致のみ自動再読み込み */
 export function ReloadRecovery() {
   useEffect(() => {
-    const tryReload = (message: string) => {
-      if (!/ChunkLoadError|Loading chunk|Failed to fetch dynamically imported module/i.test(message)) {
-        return;
-      }
-      const key = "ochomen-chunk-reload";
-      if (sessionStorage.getItem(key)) return;
-      sessionStorage.setItem(key, "1");
-      window.location.reload();
-    };
+    void purgeServiceWorkers();
+    markBootSuccess();
 
-    const onError = (event: ErrorEvent) => tryReload(event.message ?? "");
+    const onError = (event: ErrorEvent) => {
+      tryAutoRecoverFromError(event.message ?? "");
+    };
     const onRejection = (event: PromiseRejectionEvent) => {
       const reason = event.reason;
       const message = reason instanceof Error ? reason.message : String(reason ?? "");
-      tryReload(message);
+      tryAutoRecoverFromError(message);
     };
 
     window.addEventListener("error", onError);
