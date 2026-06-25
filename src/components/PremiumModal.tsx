@@ -4,27 +4,10 @@ import { useState } from "react";
 import { X, Sparkles, Check, Lock, Loader2 } from "lucide-react";
 import { FREE_MONTHLY_SCAN_LIMIT } from "@/lib/appState";
 import { appApiJsonHeaders } from "@/lib/apiClientHeaders";
+import { PLAN_LIMITS, type PlanId } from "@/lib/planLimits";
 
-export type PlanId = "free" | "premium";
-
-export const PLAN_LIMITS = {
-  free: {
-    maxEntries: 10,
-    maxChildren: 1,
-    maxMembers: 1,
-    aiDiaryEnrich: false,
-    cloudSync: false,
-    label: "無料プラン",
-  },
-  premium: {
-    maxEntries: Infinity,
-    maxChildren: 5,
-    maxMembers: 5,
-    aiDiaryEnrich: true,
-    cloudSync: true,
-    label: "プレミアム",
-  },
-} as const;
+export type { PlanId };
+export { PLAN_LIMITS };
 
 interface PremiumModalProps {
   open: boolean;
@@ -39,11 +22,11 @@ interface PremiumModalProps {
 
 const PREMIUM_FEATURES = [
   { icon: "📷", label: `スキャン　無制限`, free: `月${FREE_MONTHLY_SCAN_LIMIT}枚まで` },
-  { icon: "📁", label: "書類保存　無制限", free: "10件まで" },
-  { icon: "👨‍👩‍👧‍👦", label: "家族メンバー　5人まで", free: "1人まで" },
+  { icon: "📁", label: "過去のおたより　すべて閲覧", free: "最近3か月まで" },
+  { icon: "👨‍👩‍👧‍👦", label: "家族メンバー　5人まで", free: "2人まで" },
   { icon: "✨", label: "AI日記補完・感情タグ", free: "使用不可" },
   { icon: "☁️", label: "クラウド同期・家族共有", free: "使用不可" },
-  { icon: "🔔", label: "リマインダー通知", free: "使用不可" },
+  { icon: "🔔", label: "朝・夜ダイジェスト通知", free: "使用不可" },
 ];
 
 export function PremiumModal({

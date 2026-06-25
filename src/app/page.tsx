@@ -84,7 +84,12 @@ import {
 } from "@/lib/premiumBypass";
 import { TodoRow } from "@/components/TodoRow";
 import { Toast } from "@/components/Toast";
-import { PremiumModal, PLAN_LIMITS, type PlanId } from "@/components/PremiumModal";
+import { PremiumModal, type PlanId } from "@/components/PremiumModal";
+import {
+  PLAN_LIMITS,
+  isWithinHistoryWindow,
+  countEntriesOutsideHistory,
+} from "@/lib/planLimits";
 import { TodoDetailSheet } from "@/components/TodoDetailSheet";
 import { MemoryPromptSheet } from "@/components/MemoryPromptSheet";
 import { LettersInboxView, type LettersInboxFilter } from "@/components/LettersInboxView";
@@ -95,9 +100,6 @@ import { MemoriesFab } from "@/components/MemoriesFab";
 import { MemoriesSubviewTabs } from "@/components/MemoriesSubviewTabs";
 import { ArtworkAlbumView } from "@/components/ArtworkAlbumView";
 import { ChildGrowthTimelineView } from "@/components/ChildGrowthTimelineView";
-import {
-  type BrowseCategoryId,
-} from "@/lib/browseCategories";
 import {
   CELEBRATION_MESSAGES,
   pickCelebrationMessage,
@@ -180,8 +182,7 @@ export default function App() {
   const [suggestedTitle, setSuggestedTitle] = useState("");
   const [suggestedCategory, setSuggestedCategory] = useState("");
   const [showAltImportMenu, setShowAltImportMenu] = useState(false);
-  const [timelineBrowseFilter, setTimelineBrowseFilter] = useState<BrowseCategoryId>("all");
-  const [timelineSearchText, setTimelineSearchText] = useState("");
+  const [lettersInboxFilter, setLettersInboxFilter] = useState<LettersInboxFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchScopeFilter, setSearchScopeFilter] = useState<string>("all");
   const [highlightTodoId, setHighlightTodoId] = useState<string | null>(null);
@@ -243,8 +244,6 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingDiary, setIsProcessingDiary] = useState(false);
   const [memorySubview, setMemorySubview] = useState<MemorySubview>("timeline");
-  const [memoriesFilterOpen, setMemoriesFilterOpen] = useState(false);
-  const [lettersInboxFilter, setLettersInboxFilter] = useState<LettersInboxFilter>("all");
 
   const goToLetters = useCallback((filter: LettersInboxFilter = "all") => {
     setLettersInboxFilter(filter);
@@ -791,9 +790,6 @@ export default function App() {
   }, []);
 
   const openBatchScan = () => {
-    if (entries.filter((e) => e.id !== "manual" && e.id !== "manual_shopping").length >= planLimits.maxEntries) {
-      if (checkPremiumGate("書類の保存（11件目以降）")) return;
-    }
     setCaptureDocs([]);
     setBatchProcessing(false);
     setBatchConfirmMode(false);
@@ -922,6 +918,9 @@ export default function App() {
   const handleAddNewChild = () => {
     const name = newChildName.trim();
     if (!name) return;
+    if (children.length >= planLimits.maxChildren) {
+      if (checkPremiumGate(`お子さまの登録（${planLimits.maxChildren + 1}人目以降）`)) return;
+    }
     const colors = [
       { color: "bg-blue-500", dotColor: "bg-blue-500" },
       { color: "bg-pink-500", dotColor: "bg-pink-500" },
@@ -942,6 +941,9 @@ export default function App() {
   const handleAddNewMember = () => {
     const name = newMemberName.trim();
     if (!name) return;
+    if (members.length >= planLimits.maxMembers) {
+      if (checkPremiumGate(`家族メンバー（${planLimits.maxMembers + 1}人目以降）`)) return;
+    }
     const newMember: Member = {
       id: createLocalId("member"),
       name,
@@ -1842,6 +1844,11 @@ export default function App() {
     return entry.childIds.some((id) => selectedChildIds.includes(id));
   });
 
+  const historyVisibleEntries = filteredEntries.filter((e) =>
+    isWithinHistoryWindow(e.date, currentPlan)
+  );
+  const lockedHistoryCount = countEntriesOutsideHistory(filteredEntries, currentPlan);
+
   const allTodos: Todo[] = [];
   filteredEntries.forEach((e) => e.todos?.forEach((t) => allTodos.push(t)));
   // カレンダー手動追加・Google 取込は manual エントリに入る（書類一覧からは除外）
@@ -2512,16 +2519,12 @@ export default function App() {
         {/* おたより（スキャン受信箱） */}
         {currentScreen === "letters" && (
           <LettersInboxView
-            filteredEntries={filteredEntries}
+            filteredEntries={historyVisibleEntries}
             allEntries={entries}
             inboxFilter={lettersInboxFilter}
             onInboxFilterChange={setLettersInboxFilter}
-            searchText={timelineSearchText}
-            onSearchTextChange={setTimelineSearchText}
-            browseFilter={timelineBrowseFilter}
-            onBrowseFilterChange={setTimelineBrowseFilter}
-            filterOpen={memoriesFilterOpen}
-            onFilterOpenChange={setMemoriesFilterOpen}
+            lockedHistoryCount={lockedHistoryCount}
+            onUpgradeHistory={() => checkPremiumGate("3か月より前のおたより閲覧")}
             activeTodos={activeTodos}
             todosExpanded={recordTodosExpanded}
             onTodosExpandedChange={setRecordTodosExpanded}
@@ -2543,6 +2546,9 @@ export default function App() {
                 diaries={diaries}
                 artworks={artworks}
                 entries={entries}
+                onPromptEventMemory={(todo) =>
+                  setMemoryPromptTodo({ ...todo, isCompleted: true })
+                }
                 onOpenDiary={(diaryId) => {
                   goToMemories("diary");
                   setFocusDiaryId(diaryId);

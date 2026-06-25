@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { ChevronRight } from "lucide-react";
 import { APP_TODAY } from "@/lib/dates";
-import type { Artwork, Child, Diary, Entry } from "@/lib/types";
+import type { Artwork, Child, Diary, Entry, Todo } from "@/lib/types";
 import {
   buildChildTimelineItems,
   childFirstName,
@@ -14,6 +14,7 @@ import {
   timelineKindLabel,
   type ChildTimelineItem,
 } from "@/lib/childTimeline";
+import { getUnmemorializedEvents } from "@/lib/monthlyReflection";
 
 interface ChildGrowthTimelineViewProps {
   childrenProfiles: Child[];
@@ -24,6 +25,7 @@ interface ChildGrowthTimelineViewProps {
   onOpenDiary: (diaryId: string) => void;
   onOpenArt: (artworkId: string) => void;
   onOpenOchomen: (entryId: string, sectionIndex: number) => void;
+  onPromptEventMemory?: (todo: Todo) => void;
 }
 
 export function ChildGrowthTimelineView({
@@ -35,6 +37,7 @@ export function ChildGrowthTimelineView({
   onOpenDiary,
   onOpenArt,
   onOpenOchomen,
+  onPromptEventMemory,
 }: ChildGrowthTimelineViewProps) {
   const items = useMemo(
     () => buildChildTimelineItems(diaries, artworks, entries, selectedChildIds),
@@ -50,6 +53,10 @@ export function ChildGrowthTimelineView({
   const monthDiary = thisMonthItems.filter((i) => i.kind === "diary").length;
   const monthArt = thisMonthItems.filter((i) => i.kind === "art").length;
   const monthOchomen = thisMonthItems.filter((i) => i.kind === "ochomen").length;
+  const unmemorializedEvents = useMemo(
+    () => getUnmemorializedEvents(entries, diaries, thisMonthKey),
+    [entries, diaries, thisMonthKey]
+  );
 
   const openItem = (item: ChildTimelineItem) => {
     if (item.kind === "diary" && item.diaryId) onOpenDiary(item.diaryId);
@@ -90,6 +97,27 @@ export function ChildGrowthTimelineView({
           <p className="text-xs leading-relaxed" style={{ color: "var(--color-muted)" }}>
             日記 {monthDiary}件 · お絵描き {monthArt}点 · お帳面 {monthOchomen}件を記録しました
           </p>
+          {unmemorializedEvents.length > 0 && onPromptEventMemory && (
+            <div className="pt-2 border-t space-y-2" style={{ borderColor: "var(--color-border)" }}>
+              <p className="text-xs font-bold" style={{ color: "var(--color-text)" }}>
+                思い出に残していない行事 {unmemorializedEvents.length}件
+              </p>
+              {unmemorializedEvents.slice(0, 2).map((todo) => (
+                <button
+                  key={todo.id}
+                  type="button"
+                  onClick={() => onPromptEventMemory(todo)}
+                  className="w-full text-left text-xs py-2 px-3 rounded-xl border bg-white"
+                  style={{ borderColor: "var(--color-border)", color: "var(--color-text)" }}
+                >
+                  📌 {todo.task}
+                  <span className="block text-[10px] mt-0.5" style={{ color: "var(--color-muted)" }}>
+                    タップして日記に残す
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

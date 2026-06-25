@@ -73,6 +73,31 @@ export function getTodayActiveTodos(todos: Todo[], today = APP_TODAY): Todo[] {
   return todos.filter((t) => !t.isCompleted && t.dueDate && isToday(t.dueDate, today));
 }
 
+export function formatEveningDigest(todos: Todo[]): { title: string; body: string } | null {
+  const tomorrowTodos = todos.filter(
+    (t) => !t.isCompleted && t.dueDate && isTomorrow(t.dueDate) && t.type !== "event"
+  );
+  const todayLeft = todos.filter(
+    (t) => !t.isCompleted && t.dueDate && isToday(t.dueDate) && t.type !== "event"
+  );
+  const focus = tomorrowTodos[0] || todayLeft[0];
+  if (!focus) return null;
+
+  if (tomorrowTodos.length > 0) {
+    return {
+      title: "今夜は、ひとつだけ",
+      body:
+        tomorrowTodos.length === 1
+          ? `明日: ${focus.task}`
+          : `明日: ${focus.task} ほか${tomorrowTodos.length - 1}件`,
+    };
+  }
+  return {
+    title: "きょうの残り",
+    body: todayLeft.length === 1 ? focus.task : `${focus.task} ほか${todayLeft.length - 1}件`,
+  };
+}
+
 export function formatMorningDigest(todos: Todo[]): { title: string; body: string } | null {
   const todayTodos = getTodayActiveTodos(todos);
   if (todayTodos.length === 0) return null;
@@ -127,16 +152,17 @@ function showNotification(title: string, body: string, tag: string): boolean {
 
 export interface ReminderCheckResult {
   morningSent: boolean;
+  eveningSent: boolean;
   taskCount: number;
 }
 
-/** Premium 有効時: 朝ダイジェスト + 期限リマインダーをブラウザ通知 */
+/** Premium 有効時: 朝・夜ダイジェスト + 期限リマインダーをブラウザ通知 */
 export function runReminderNotificationCycle(
   entries: Entry[],
   prefs: NotificationPrefs,
   options: { premium: boolean; today?: string }
 ): ReminderCheckResult {
-  const result: ReminderCheckResult = { morningSent: false, taskCount: 0 };
+  const result: ReminderCheckResult = { morningSent: false, eveningSent: false, taskCount: 0 };
   if (!prefs.enabled || !options.premium) return result;
   if (getNotificationPermission() !== "granted") return result;
 
@@ -150,6 +176,18 @@ export function runReminderNotificationCycle(
     if (digest && showNotification(digest.title, digest.body, "ochomen-morning")) {
       markSent("morning", "digest", today);
       result.morningSent = true;
+    }
+  }
+
+  if (
+    prefs.eveningEnabled &&
+    currentHour >= prefs.eveningHour &&
+    !wasSent("evening", "digest", today)
+  ) {
+    const digest = formatEveningDigest(todos);
+    if (digest && showNotification(digest.title, digest.body, "ochomen-evening")) {
+      markSent("evening", "digest", today);
+      result.eveningSent = true;
     }
   }
 

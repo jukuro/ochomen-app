@@ -11,6 +11,7 @@ import { createClient, type SupabaseClient, type Session } from "@supabase/supab
 import type { Artwork, Child, Diary, Entry, EntrySection, Todo } from "@/lib/types";
 import { toLocalChildId, toLocalEntryId, toLocalTodoId, toSyncId } from "@/lib/syncIds";
 import { mergeCloudChildProfiles } from "@/lib/childProfile";
+import { appApiJsonHeaders } from "@/lib/apiClientHeaders";
 
 // ── クライアント初期化 ──────────────────────────────────────────
 const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
@@ -91,6 +92,30 @@ export async function ensureFamily(
 
   if (existing?.family_id) return existing.family_id;
 
+  const invitedFamilyId =
+    typeof session.user.user_metadata?.invited_family_id === "string"
+      ? session.user.user_metadata.invited_family_id
+      : null;
+
+  if (invitedFamilyId) {
+    const { data: familyRow } = await supabase
+      .from("families")
+      .select("id")
+      .eq("id", invitedFamilyId)
+      .maybeSingle();
+
+    if (familyRow?.id) {
+      const { error: joinErr } = await supabase.from("family_members").insert({
+        family_id: invitedFamilyId,
+        user_id: session.user.id,
+        display_name: displayName,
+        role: "parent",
+      });
+      if (!joinErr) return invitedFamilyId;
+      console.error("Failed to join invited family:", joinErr);
+    }
+  }
+
   // 新規家族作成
   // insert().select() は RLS 上、family_members 未作成時に SELECT が拒否されるため
   // クライアント側で UUID を生成して insert のみ行う
@@ -128,10 +153,29 @@ export async function ensureFamily(
  */
 export async function inviteFamilyMember(email: string): Promise<void> {
   if (!supabase) throw new Error("Supabase is not configured.");
-  // Supabase Auth Admin API が必要なため、ここでは TODO 扱い
-  // 実装例: supabase.auth.admin.inviteUserByEmail(email)
-  console.info("[TODO] Invite family member:", email);
-  throw new Error("招待機能は準備中です。");
+  const session = await getSession();
+  if (!session) throw new Error("ログインしてから招待してください。");
+
+  const res = await fetch("/api/family/invite", {
+    method: "POST",
+    headers: appApiJsonHeaders(),
+    body: JSON.stringify({ email, accessToken: session.access_token }),
+  });
+
+  const data = (await res.json()) as { error?: string; ok?: boolean };
+  if (!res.ok) {
+    const msg =
+      data.error === "ALREADY_REGISTERED"
+        ? "このメールは既に登録されています"
+        : data.error === "SELF_INVITE"
+          ? "自分自身は招待できません"
+          : data.error === "MEMBER_LIMIT"
+            ? "家族メンバー上限に達しています"
+            : data.error === "NO_FAMILY"
+              ? "家族グループが見つかりません。一度ログアウトして再ログインしてください"
+              : "招待メールの送信に失敗しました";
+    throw new Error(msg);
+  }
 }
 
 // ── 家族IDの取得 ──────────────────────────────────────────────

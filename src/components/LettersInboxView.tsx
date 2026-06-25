@@ -1,14 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { AlertCircle, Camera, ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from "lucide-react";
+import { AlertCircle, Camera, ChevronDown, ChevronUp } from "lucide-react";
 import type { Entry, Todo } from "@/lib/types";
-import {
-  BROWSE_CATEGORIES,
-  matchesBrowseCategory,
-  entryMatchesSearch,
-  type BrowseCategoryId,
-} from "@/lib/browseCategories";
 import { todoNeedsReview } from "@/lib/todoReview";
 import { countSyncableEntries } from "@/lib/supabaseSync";
 
@@ -23,12 +17,8 @@ interface LettersInboxViewProps {
   allEntries: Entry[];
   inboxFilter: LettersInboxFilter;
   onInboxFilterChange: (filter: LettersInboxFilter) => void;
-  searchText: string;
-  onSearchTextChange: (text: string) => void;
-  browseFilter: BrowseCategoryId;
-  onBrowseFilterChange: (id: BrowseCategoryId) => void;
-  filterOpen: boolean;
-  onFilterOpenChange: (open: boolean) => void;
+  lockedHistoryCount?: number;
+  onUpgradeHistory?: () => void;
   activeTodos: Todo[];
   todosExpanded: boolean;
   onTodosExpandedChange: (expanded: boolean) => void;
@@ -42,12 +32,8 @@ export function LettersInboxView({
   allEntries,
   inboxFilter,
   onInboxFilterChange,
-  searchText,
-  onSearchTextChange,
-  browseFilter,
-  onBrowseFilterChange,
-  filterOpen,
-  onFilterOpenChange,
+  lockedHistoryCount = 0,
+  onUpgradeHistory,
   activeTodos,
   todosExpanded,
   onTodosExpandedChange,
@@ -61,8 +47,6 @@ export function LettersInboxView({
   const inboxFiltered = filteredEntries.filter((e) => {
     if (inboxFilter === "unread" && e.isRead) return false;
     if (inboxFilter === "needs_review" && !entryNeedsReview(e)) return false;
-    if (!matchesBrowseCategory(e, browseFilter)) return false;
-    if (!entryMatchesSearch(e, searchText)) return false;
     return true;
   });
 
@@ -116,83 +100,16 @@ export function LettersInboxView({
           ))}
         </div>
 
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Search
-              size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2"
-              style={{ color: "var(--color-muted)" }}
-            />
-            <input
-              type="search"
-              value={searchText}
-              onChange={(e) => onSearchTextChange(e.target.value)}
-              placeholder="体操服、参観日、給食…"
-              className="w-full pl-9 pr-3 py-3 rounded-2xl text-sm border bg-[var(--color-bg)] outline-none focus:border-[var(--color-primary)]"
-              style={{ borderColor: "var(--color-border)", color: "var(--color-text)" }}
-            />
-          </div>
+        {lockedHistoryCount > 0 && onUpgradeHistory && (
           <button
             type="button"
-            onClick={() => onFilterOpenChange(!filterOpen)}
-            aria-label="カテゴリー絞り込み"
-            className={`flex-shrink-0 w-12 h-12 rounded-2xl border flex items-center justify-center transition ${
-              filterOpen || browseFilter !== "all" ? "border-[var(--color-primary)]" : ""
-            }`}
-            style={{
-              background:
-                filterOpen || browseFilter !== "all"
-                  ? "var(--color-primary-light)"
-                  : "var(--color-bg)",
-              color:
-                filterOpen || browseFilter !== "all"
-                  ? "var(--color-primary)"
-                  : "var(--color-muted)",
-              borderColor:
-                filterOpen || browseFilter !== "all"
-                  ? "var(--color-primary)"
-                  : "var(--color-border)",
-            }}
+            onClick={onUpgradeHistory}
+            className="w-full text-left rounded-xl px-3 py-2.5 border border-amber-200 bg-amber-50 text-xs text-amber-800"
           >
-            <SlidersHorizontal size={18} />
-          </button>
-        </div>
-
-        {filterOpen && (
-          <div className="flex gap-1.5 overflow-x-auto scrollbar-none pb-1">
-            {BROWSE_CATEGORIES.map(({ id, label, icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => {
-                  onBrowseFilterChange(id);
-                  if (id === "all") onFilterOpenChange(false);
-                }}
-                className={`flex-shrink-0 flex items-center gap-1 px-3 py-2 rounded-full text-[11px] font-bold border transition min-h-[40px] ${
-                  browseFilter === id ? "text-white border-transparent" : "bg-white"
-                }`}
-                style={
-                  browseFilter === id
-                    ? { background: "var(--color-primary)", borderColor: "var(--color-primary)" }
-                    : { borderColor: "var(--color-border)", color: "var(--color-text)" }
-                }
-              >
-                {icon} {label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {!filterOpen && browseFilter !== "all" && (
-          <button
-            type="button"
-            onClick={() => onBrowseFilterChange("all")}
-            className="text-[11px] font-bold px-3 py-1 rounded-full inline-flex items-center gap-1"
-            style={{ background: "var(--color-primary-light)", color: "var(--color-primary)" }}
-          >
-            {BROWSE_CATEGORIES.find((c) => c.id === browseFilter)?.icon}{" "}
-            {BROWSE_CATEGORIES.find((c) => c.id === browseFilter)?.label}
-            <X size={12} />
+            <span className="font-bold">📁 {lockedHistoryCount}件のおたより</span>
+            <span className="block mt-0.5 text-[10px] opacity-90">
+              3か月より前はプレミアムで閲覧できます（保存はそのまま）
+            </span>
           </button>
         )}
       </div>
@@ -221,7 +138,7 @@ export function LettersInboxView({
       <div className="app-scroll-pane p-4 space-y-4 pb-24 flex-1 min-h-0">
         {inboxFiltered.length === 0 ? (
           <div className="text-center py-12 text-sm space-y-2" style={{ color: "var(--color-muted)" }}>
-            {searchText.trim() || browseFilter !== "all" || inboxFilter !== "all" ? (
+            {inboxFilter !== "all" ? (
               <p>条件に合うおたよりが見つかりません</p>
             ) : countSyncableEntries(allEntries) > 0 && filteredEntries.length === 0 ? (
               <>

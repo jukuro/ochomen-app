@@ -3,6 +3,9 @@ export interface NotificationPrefs {
   morningEnabled: boolean;
   /** 0–23、既定 7時 */
   morningHour: number;
+  eveningEnabled: boolean;
+  /** 0–23、既定 20時 */
+  eveningHour: number;
   taskRemindersEnabled: boolean;
 }
 
@@ -10,6 +13,8 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   enabled: false,
   morningEnabled: true,
   morningHour: 7,
+  eveningEnabled: true,
+  eveningHour: 20,
   taskRemindersEnabled: true,
 };
 
@@ -28,6 +33,10 @@ export function loadNotificationPrefs(): NotificationPrefs {
         typeof parsed.morningHour === "number"
           ? Math.min(23, Math.max(0, parsed.morningHour))
           : DEFAULT_NOTIFICATION_PREFS.morningHour,
+      eveningHour:
+        typeof parsed.eveningHour === "number"
+          ? Math.min(23, Math.max(0, parsed.eveningHour))
+          : DEFAULT_NOTIFICATION_PREFS.eveningHour,
     };
   } catch {
     return DEFAULT_NOTIFICATION_PREFS;

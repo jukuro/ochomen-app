@@ -12,6 +12,7 @@ import {
   signUpWithEmail,
   signOut,
   fetchCloudEntryCount,
+  inviteFamilyMember,
 } from "@/lib/supabaseSync";
 import type { NotificationPrefs } from "@/lib/notificationPrefs";
 import {
@@ -141,6 +142,9 @@ export function SettingsModal({
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [cloudEntryCount, setCloudEntryCount] = useState<number | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteMessage, setInviteMessage] = useState<string | null>(null);
 
   const refreshCloudCount = async () => {
     if (!currentUserEmail) {
@@ -229,6 +233,26 @@ export function SettingsModal({
   const handleSignOut = async () => {
     await signOut();
     setCurrentUserEmail(null);
+    setCloudEntryCount(null);
+    setInviteEmail("");
+    setInviteMessage(null);
+  };
+
+  const handleInviteFamily = async () => {
+    const email = inviteEmail.trim();
+    if (!email) return;
+    setInviteLoading(true);
+    setInviteMessage(null);
+    try {
+      await inviteFamilyMember(email);
+      setInviteMessage(`${email} に招待メールを送りました`);
+      setInviteEmail("");
+      onToast?.("招待メールを送信しました", { celebrate: true });
+    } catch (err) {
+      setInviteMessage(err instanceof Error ? err.message : "招待に失敗しました");
+    } finally {
+      setInviteLoading(false);
+    }
   };
 
   if (!open) return null;
@@ -254,7 +278,7 @@ export function SettingsModal({
                 {currentPlan === "premium" ? "✨ プレミアムプラン" : "無料プラン"}
               </p>
               <p className="text-xs text-slate-500 mt-0.5">
-                {currentPlan === "premium" ? "すべての機能をご利用いただけます" : "書類10件・メンバー1人まで"}
+                {currentPlan === "premium" ? "すべての機能をご利用いただけます" : "スキャン月10枚・履歴3か月・メンバー2人まで"}
               </p>
             </div>
             {currentPlan !== "premium" && onShowPremium && (
@@ -358,6 +382,34 @@ export function SettingsModal({
               <p className="text-[10px] text-teal-600 pl-1">
                 ✓ 変更は自動でクラウドに同期されます
               </p>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                <p className="text-xs font-bold text-slate-700">家族を招待</p>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  パートナーなど別アカウントの方を招待すると、同じおたより・予定を共有できます
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="招待するメールアドレス"
+                    className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white outline-none focus:border-teal-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleInviteFamily()}
+                    disabled={inviteLoading || !inviteEmail.trim()}
+                    className="px-3 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold disabled:opacity-40"
+                  >
+                    {inviteLoading ? <Loader2 size={14} className="animate-spin" /> : "招待"}
+                  </button>
+                </div>
+                {inviteMessage && (
+                  <p className="text-[10px] text-slate-600">{inviteMessage}</p>
+                )}
+              </div>
+
               <p className="text-[10px] text-slate-500 pl-1">
                 この端末の書類: <strong>{syncableEntryCount} 件</strong>
                 {currentUserEmail && (
@@ -536,6 +588,26 @@ export function SettingsModal({
                       onNotificationPrefsChange({
                         ...notificationPrefs,
                         morningEnabled: e.target.checked,
+                      })
+                    }
+                    className="accent-teal-600 w-4 h-4"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-200/50">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 block">夜のダイジェスト</span>
+                    <span className="text-[9px] text-slate-400">
+                      毎日{notificationPrefs.eveningHour}時以降に「今夜は1つだけ」を通知
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={notificationPrefs.eveningEnabled}
+                    onChange={(e) =>
+                      onNotificationPrefsChange({
+                        ...notificationPrefs,
+                        eveningEnabled: e.target.checked,
                       })
                     }
                     className="accent-teal-600 w-4 h-4"
